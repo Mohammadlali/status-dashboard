@@ -1,0 +1,202 @@
+name: Deploy Status Dashboard
+
+# Fleet-wide ops status dashboard for status.airboxvip.top (CCP gates +
+# Control-Room gates + all 9 accounts). Moved out of
+# Mohammadlali/Claud-Cloud-Project 2026-09-11 -- it was never CCP-specific,
+# it just used to live in CCP's repo. Same Vercel project name
+# ("claud-cloud-status", see vercel.json) and the same VERCEL_TOKEN carry
+# over from the old location, so the live domain alias is unaffected by
+# the move.
+#
+# - Regenerates status.json using ACC0_PAT..ACC8_PAT.
+# - Deploys the static site (repo root) to Vercel project 'claud-cloud-status'.
+# - READ-FIRST Cloudflare DNS check: adds only the status subdomain CNAME if missing;
+#   never modifies or deletes any existing DNS records.
+# - Optional snapshot archival to Cloudflare R2 if R2_* credentials exist.
+# - Scheduled every 5 minutes (GitHub's real floor; 30 minutes was too slow) + manual dispatch.
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+    inputs:
+      subdomain:
+        description: 'Target subdomain on airboxvip.top'
+        required: false
+        default: 'status.airboxvip.top'
+        type: string
+      deploy_vercel:
+        description: 'Deploy static site to Vercel'
+        required: false
+        default: true
+        type: boolean
+      ensure_dns:
+        description: 'Ensure Cloudflare DNS CNAME record exists'
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  deploy-feed:
+    name: Build and Deploy Status Dashboard
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Python Dependencies
+        run: |
+          python3 -m pip install --upgrade pip
+          pip install boto3 pywebpush 2>/dev/null || true
+
+      - name: Regenerate Status Feed JSON
+        env:
+          ACC0_PAT: ${{ secrets.ACC0_PAT }}
+          ACC1_PAT: ${{ secrets.ACC1_PAT }}
+          ACC2_PAT: ${{ secrets.ACC2_PAT }}
+          ACC3_PAT: ${{ secrets.ACC3_PAT }}
+          ACC4_PAT: ${{ secrets.ACC4_PAT }}
+          ACC5_PAT: ${{ secrets.ACC5_PAT }}
+          ACC6_PAT: ${{ secrets.ACC6_PAT }}
+          ACC7_PAT: ${{ secrets.ACC7_PAT }}
+          ACC8_PAT: ${{ secrets.ACC8_PAT }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_S3_ENDPOINT: ${{ secrets.R2_S3_ENDPOINT }}
+          VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
+          VAPID_PUBLIC_KEY: ${{ secrets.VAPID_PUBLIC_KEY }}
+        run: |
+          SUBDOMAIN="${{ inputs.subdomain || 'status.airboxvip.top' }}"
+          python3 Tools/collect_status_feed.py --out status.json --gates-dir Reports/gates --subdomain "$SUBDOMAIN"
+
+      - name: Commit updated status.json
+        # Self-push credential is ACC0_PAT (this repo's own account, Mohammadlali) --
+        # not ACC6_PAT, since this repo no longer lives on ACC6. Unset checkout's
+        # own extraheader first: actions/checkout@v4 already sets one carrying the
+        # default GITHUB_TOKEN, and git's extraHeader is multi-valued, so adding a
+        # second one without unsetting the first sends BOTH and GitHub rejects the
+        # request outright ("Duplicate header: Authorization") -- this exact bug
+        # was found and fixed in the original CCP-hosted version of this workflow
+        # 2026-09-11; carried the fix forward here from day one instead of
+        # rediscovering it.
+        env:
+          GH_TOKEN: ${{ secrets.ACC0_PAT }}
+        run: |
+          BRANCH="main"
+          if git diff --quiet -- status.json; then
+            echo "status.json unchanged -- nothing to commit."
+          else
+            git config user.email "status-feed@claud-cloud.local"
+            git config user.name "Status Feed Bot"
+            git add status.json
+            git commit -m "status: regenerate status.json"
+
+            git config --local --unset-all http.https://github.com/.extraheader || true
+
+            AUTH_HEADER="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+            MAX_RETRIES=3
+            attempt=1
+            success=false
+            while [ "$attempt" -le "$((MAX_RETRIES + 1))" ]; do
+              if git -c http.https://github.com/.extraHeader="$AUTH_HEADER" push origin "HEAD:$BRANCH"; then
+                success=true
+                break
+              fi
+              echo "Push attempt $attempt failed." >&2
+              if [ "$attempt" -le "$MAX_RETRIES" ]; then
+                git -c http.https://github.com/.extraHeader="$AUTH_HEADER" fetch origin "$BRANCH"
+                if ! git rebase "origin/$BRANCH" -X ours; then
+                  git rebase --abort
+                  echo "Error: rebase conflict on retry $attempt -- aborting." >&2
+                  break
+                fi
+              fi
+              attempt=$((attempt + 1))
+            done
+            if [ "$success" != "true" ]; then
+              echo "Error: failed to push status.json after $MAX_RETRIES retries." >&2
+              exit 1
+            fi
+          fi
+
+      - name: Ensure Cloudflare DNS Record
+        if: ${{ inputs.ensure_dns != false }}
+        env:
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+        run: |
+          SUBDOMAIN="${{ inputs.subdomain || 'status.airboxvip.top' }}"
+          python3 Tools/ensure_cloudflare_dns.py --zone airboxvip.top --subdomain "$SUBDOMAIN" --target cname.vercel-dns.com
+
+      - name: Deploy to Vercel
+        if: ${{ inputs.deploy_vercel != false }}
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          SUBDOMAIN="${{ inputs.subdomain || 'status.airboxvip.top' }}"
+          if [ -z "$VERCEL_TOKEN" ]; then
+            echo "VERCEL_TOKEN not provided -- skipping Vercel deployment."
+            exit 0
+          fi
+          echo "Deploying repo root to Vercel project 'claud-cloud-status'..."
+          DEPLOY_OUTPUT=""
+          if npx --yes vercel build --prod --token="$VERCEL_TOKEN" --yes; then
+            DEPLOY_OUTPUT=$(npx --yes vercel deploy --prebuilt --prod --token="$VERCEL_TOKEN" --yes)
+          else
+            DEPLOY_OUTPUT=$(timeout 180 npx --yes vercel deploy --prod --token="$VERCEL_TOKEN" --yes || echo "")
+          fi
+          echo "Deployment raw output: $DEPLOY_OUTPUT"
+
+          DEPLOY_URL=$(echo "$DEPLOY_OUTPUT" | grep -Eo 'https://[a-zA-Z0-9.-]+\.vercel\.app' | head -n 1)
+          if [ -z "$DEPLOY_URL" ]; then
+            if [ -n "$DEPLOY_OUTPUT" ]; then
+              DEPLOY_URL="$DEPLOY_OUTPUT"
+            else
+              echo "::error::No deployment URL retrieved; cannot assign domain alias."
+              exit 1
+            fi
+          fi
+
+          # Vercel alias-readiness race condition: see the original CCP-hosted
+          # workflow's history (run 34619809977) -- a fresh deployment is not
+          # always immediately "ready" for aliasing. Retry with backoff and
+          # fail the job for real if it never succeeds; never silently swallow
+          # with `|| true`.
+          echo "Assigning domain alias $SUBDOMAIN to $DEPLOY_URL..."
+          ALIAS_OK=false
+          for attempt in $(seq 1 24); do
+            if npx --yes vercel alias set "$DEPLOY_URL" "$SUBDOMAIN" --token="$VERCEL_TOKEN"; then
+              ALIAS_OK=true
+              break
+            fi
+            echo "Alias attempt $attempt failed (deployment likely not ready yet); retrying in 15s..."
+            sleep 15
+          done
+          if [ "$ALIAS_OK" != "true" ]; then
+            echo "::error::Could not assign domain alias after 24 attempts (6 minutes); $SUBDOMAIN still points at the previous deployment."
+            exit 1
+          fi
+
+      - name: Deployment Verification Summary
+        run: |
+          SUBDOMAIN="${{ inputs.subdomain || 'status.airboxvip.top' }}"
+          echo "============================================="
+          echo "STATUS DASHBOARD DEPLOYMENT COMPLETED"
+          echo "Target Subdomain: https://$SUBDOMAIN"
+          echo "Vercel Project: claud-cloud-status"
+          echo "Verification commands:"
+          echo "  curl -I https://$SUBDOMAIN"
+          echo "  curl -s https://$SUBDOMAIN/status.json | jq .overview"
+          echo "============================================="

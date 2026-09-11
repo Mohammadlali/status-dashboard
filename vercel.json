@@ -1,0 +1,14 @@
+{
+  "name": "claud-cloud-status",
+  "version": 2,
+  "cleanUrls": true,
+  "headers": [
+    {
+      "source": "/status.json",
+      "headers": [
+        { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" },
+        { "key": "Access-Control-Allow-Origin", "value": "*" }
+      ]
+    }
+  ]
+}

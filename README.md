@@ -1,2 +1,51 @@
 # status-dashboard
-Fleet-wide ops status dashboard for status.airboxvip.top (CCP + Control-Room + all 9 accounts). Moved out of Claud-Cloud-Project since it isn't CCP-specific.
+
+Fleet-wide operations status dashboard for **status.airboxvip.top**.
+
+Shows live health for:
+- `Mohammadlali/Claud-Cloud-Project` (CCP) gates
+- `mohammadlali0707-stack/Control-Room` gates
+- All 9 fleet accounts (recent commits, open/blocked/stale issues, recent Actions runs)
+
+## Why this repo exists
+
+This dashboard used to live inside CCP's own repo (`StatusFeed/` +
+`.github/workflows/deploy-status-feed.yml`). It was moved out 2026-09-11
+because it was never CCP-specific -- it reports on Control-Room and all 9
+accounts too, and CCP itself now lives entirely on a different GitHub
+account (ACC6, `mohammadlali0707-stack`). A fleet-wide dashboard belongs to
+the account that manages the fleet (ACC0, `Mohammadlali`), not bundled
+inside one product repo hosted on a different account.
+
+## Layout
+
+| Path | What it is |
+|---|---|
+| `index.html`, `app.js`, `style.css` | The dashboard UI (Persian/RTL) |
+| `manifest.json`, `sw.js`, `icons/` | PWA install + push notification support |
+| `api/subscribe.js` | Vercel serverless function storing push subscriptions in Cloudflare R2 |
+| `vapid_public.json` | Public half of the Web Push VAPID keypair (not secret) |
+| `vercel.json` | Names the Vercel project (`claud-cloud-status`) so deploys keep landing on the same project/domain |
+| `Tools/collect_status_feed.py` | Regenerates `status.json` by querying all 9 accounts + Control-Room via their PATs |
+| `Tools/send_push_notification.py` | Encrypted Web Push delivery (RFC 8291/8292) when a new red item appears |
+| `Tools/ensure_cloudflare_dns.py` | Read-first Cloudflare DNS check -- only adds the subdomain CNAME if missing, never touches existing records |
+| `.github/workflows/deploy-status-feed.yml` | Scheduled (every 5 min) + manual: regenerate `status.json`, ensure DNS, deploy to Vercel |
+
+## Secrets this repo needs
+
+`ACC0_PAT` .. `ACC8_PAT` (one PAT per fleet account, for cross-account status
+queries -- `ACC0_PAT` doubles as this repo's own self-push credential),
+`VERCEL_TOKEN`, `CF_API_TOKEN`, `CF_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`,
+`R2_SECRET_ACCESS_KEY`, `R2_S3_ENDPOINT`, `VAPID_PRIVATE_KEY`,
+`VAPID_PUBLIC_KEY` (optional).
+
+## The `Reports/gates` gap
+
+`collect_latest_gate_report()` looks for `Reports/gates/gates-*.txt` in
+*this* repo to build the "CCP gate health" card. That directory doesn't
+exist here (CCP's own gate reports live on ACC6, not in this dashboard
+repo), so it degrades gracefully to `"status": "unmeasured"` rather than
+crashing -- this is a known, accepted gap from the move, not a bug. Making
+that card cross-repo (querying ACC6's `Reports/gates` via API, the same way
+`probe_control_room_gates()` already does for Control-Room) is real
+follow-up work, not yet done.
