@@ -19,11 +19,18 @@ name: Refresh Status Data (Gist only, no deploy)
 # new deployment on each invocation) reads that same gist back live for
 # the site. This workflow's only job is to keep the gist fresh; it never
 # touches git or Vercel at all.
+#
+# Schedule removed 2026-09-12: the live 5-minute refresh runs on
+# Mohammadlali/agw-workers (deploy-status-feed-remote.yml) instead, because
+# that repo is public with unlimited Actions minutes while this repo's
+# minutes are metered. This copy's own `schedule:` trigger was left in by
+# mistake during that move -- both copies were firing every 5 minutes in
+# parallel, racing to PATCH the same gist and burning this repo's own
+# quota for no reason. Kept as workflow_dispatch only, for manual/fallback
+# runs.
 
 on:
   workflow_dispatch: {}
-  schedule:
-    - cron: '*/5 * * * *'
 
 permissions:
   contents: read
