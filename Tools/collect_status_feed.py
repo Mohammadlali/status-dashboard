@@ -13,7 +13,7 @@ For each project in PROJECTS, using that project's own account PAT:
   gates) rolled into one alert list.
 - Enforces the project doctrine: quiet green when nominal, prominent red
   alerts when stuck.
-- Optionally archives snapshots to Cloudflare R2 if R2_* credentials are provided.
+- Publishes the feed to the fleet's status Gist so api/status.js can serve it live.
 
 This is deliberately project-centric, not account-centric: two accounts in
 this fleet (ACC0, ACC6) each host more than one product, so "one card per
@@ -46,22 +46,19 @@ if TOOLS_DIR not in sys.path:
 
 try:
     from send_push_notification import (
-        generate_r2_presigned_upload_url,
-        load_subscription_from_r2,
+        load_subscription_from_gist,
         send_push,
         DEFAULT_VAPID_PUBLIC
     )
 except ImportError:
     try:
         from Tools.send_push_notification import (
-            generate_r2_presigned_upload_url,
-            load_subscription_from_r2,
+            load_subscription_from_gist,
             send_push,
             DEFAULT_VAPID_PUBLIC
         )
     except ImportError:
-        generate_r2_presigned_upload_url = None
-        load_subscription_from_r2 = None
+        load_subscription_from_gist = None
         send_push = None
         DEFAULT_VAPID_PUBLIC = "BG_JbNQKSkg6lQHIYAuJdrfXVMr4lttYSmouPlhSJ2tMQkKnFtJdDKaIFrd02oAn16BbE7sHOyzFkNijd-gELvA"
 
@@ -479,11 +476,12 @@ def build_status_feed(env_tokens=None, subdomain="status.airboxvip.top"):
         "recent_runs": all_recent_runs
     }
 
-    # Attach push notification config for PWA frontend
-    r2_upload_url = generate_r2_presigned_upload_url() if generate_r2_presigned_upload_url else None
+    # Attach push notification config for PWA frontend. There is no
+    # presigned-upload-URL equivalent for Gists (every write needs an
+    # authenticated Bearer token) -- the browser always goes through
+    # /api/subscribe now, which holds that token server-side.
     feed["push_config"] = {
         "vapid_public_key": os.environ.get("VAPID_PUBLIC_KEY", DEFAULT_VAPID_PUBLIC),
-        "r2_upload_url": r2_upload_url
     }
 
     return feed
@@ -511,38 +509,48 @@ def detect_new_red_items(prev_feed, current_feed):
     return new_red
 
 
-def archive_to_r2_if_configured(feed_data):
-    """Archive status snapshot to Cloudflare R2 if R2_* env vars exist."""
-    endpoint = os.environ.get("R2_S3_ENDPOINT")
-    access_key = os.environ.get("R2_ACCESS_KEY_ID")
-    secret_key = os.environ.get("R2_SECRET_ACCESS_KEY")
-    bucket = os.environ.get("R2_BUCKET", "claud-cloud-status")
+STATUS_GIST_ID = "8a1dbd864c788597da9c7750c70bd419"
 
-    if not (endpoint and access_key and secret_key):
-        return False, "R2 credentials not provided in environment; skipping R2 snapshot archival."
 
+def publish_to_gist_if_configured(feed_data):
+    """Publish the status snapshot to the fleet's status Gist, if a token is available.
+
+    Replaces the earlier Cloudflare R2 archival path (archive_to_r2_if_configured):
+    R2 is permanently unavailable on the owner's Cloudflare account (not fully
+    provisioned, so Cloudflare blocks all TLS to the R2 endpoint account-wide --
+    confirmed identically across 4 separate client/runtime combinations while
+    debugging api/status.js, so not fixable from this side). ACC0_PAT already has
+    the 'gist' scope (verified live) and is already present in every workflow that
+    calls this script, so no new credential is needed.
+    """
+    token = os.environ.get("ACC0_PAT")
+    if not token:
+        return False, "ACC0_PAT not provided in environment; skipping Gist publish."
+
+    body = json.dumps(feed_data, indent=2, ensure_ascii=False)
+    payload = json.dumps({"files": {"status.json": {"content": body}}}).encode("utf-8")
+    req = urllib.request.Request(
+        f"https://api.github.com/gists/{STATUS_GIST_ID}",
+        data=payload,
+        method="PATCH",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "Content-Type": "application/json",
+        },
+    )
     try:
-        import boto3
-        from botocore.config import Config
-
-        s3 = boto3.client(
-            "s3",
-            endpoint_url=endpoint,
-            aws_access_key_id=access_key,
-            aws_secret_access_key=secret_key,
-            config=Config(signature_version="s3v4")
-        )
-
-        body = json.dumps(feed_data, indent=2)
-        s3.put_object(Bucket=bucket, Key="status.json", Body=body, ContentType="application/json")
-
-        ts = feed_data["metadata"]["generated_at"].replace(":", "").replace("-", "")
-        s3.put_object(Bucket=bucket, Key=f"history/status-{ts}.json", Body=body, ContentType="application/json")
-        return True, f"Successfully archived status to R2 bucket '{bucket}'."
-    except ImportError:
-        return False, "boto3 not installed; skipping R2 archival."
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            resp.read()
+        return True, f"Successfully published status.json to gist {STATUS_GIST_ID}."
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        return False, f"Gist publish HTTP {exc.code}: {exc.reason} ({detail[:200]})"
+    except urllib.error.URLError as exc:
+        return False, f"Gist publish network error: {exc.reason}"
     except Exception as exc:
-        return False, f"R2 upload error: {str(exc)}"
+        return False, f"Gist publish error: {str(exc)}"
 
 
 def main():
@@ -584,8 +592,8 @@ def main():
     if new_red or args.test_push:
         count = len(new_red)
         print(f"Push Alert Check: {count} NEW red item(s) detected.")
-        if load_subscription_from_r2 and send_push:
-            sub, sub_err = load_subscription_from_r2()
+        if load_subscription_from_gist and send_push:
+            sub, sub_err = load_subscription_from_gist()
             if sub:
                 first = new_red[0] if new_red else {"title": "Test notification", "account": "Admin"}
                 title = f"[RED ALERT] {count} new stuck item(s) in operations" if new_red else "[TEST] Claud-Cloud Operations"
@@ -593,14 +601,14 @@ def main():
                 push_ok, push_msg = send_push(sub, title, body, target_url=f"https://{args.subdomain}#stuck-section")
                 print(f"Web Push Dispatch: {push_msg}")
             else:
-                print(f"Web Push Notice: Skipped ({sub_err or 'No subscriber registered in R2'}).")
+                print(f"Web Push Notice: Skipped ({sub_err or 'No subscriber registered'}).")
         else:
             print("Web Push Notice: Push modules not available; skipping dispatch.")
     else:
         print("Push Alert Check: No new red items (Quiet Green doctrine enforced).")
 
-    r2_ok, r2_msg = archive_to_r2_if_configured(feed)
-    print(f"R2 Snapshot: {r2_msg}")
+    gist_ok, gist_msg = publish_to_gist_if_configured(feed)
+    print(f"Gist Publish: {gist_msg}")
 
     emit_digest("status_feed_collected", "pass", {
         "out": os.path.relpath(args.out, ROOT) if args.out.startswith(ROOT) else args.out,

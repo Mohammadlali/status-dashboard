@@ -1,4 +1,4 @@
-name: Refresh Status Data (R2 only, no deploy)
+name: Refresh Status Data (Gist only, no deploy)
 
 # Replaces the "Regenerate Status Feed JSON" + "Commit updated status.json"
 # + "Deploy to Vercel" cycle that used to run every 5 minutes in
@@ -7,13 +7,18 @@ name: Refresh Status Data (R2 only, no deploy)
 # intervals, against the free-tier cap of 100 deployments/day (see
 # Team/CHANGELOG.md and the real failures in deploy-status-feed.yml's run
 # history: "Error: Resource is limited ... api-deployments-free-per-day").
-# collect_status_feed.py already writes straight to Cloudflare R2 (bucket
-# claud-cloud-status, key "status.json") via its own archive_to_r2_if_configured()
-# -- that upload isn't a Vercel deployment and has no daily cap that matters
-# at this volume. api/status.js (a Vercel function, not a new deployment on
-# each invocation) reads that same object back for the live site. This
-# workflow's only job is to keep that R2 object fresh; it never touches git
-# or Vercel at all.
+#
+# Originally wrote to Cloudflare R2 -- abandoned 2026-09-12: R2 is
+# permanently unavailable on the owner's Cloudflare account (not fully
+# provisioned, so Cloudflare blocks all TLS to the R2 endpoint
+# account-wide, confirmed across 4 different client/runtime combinations).
+# collect_status_feed.py now PATCHes the fleet's status Gist instead (see
+# publish_to_gist_if_configured(), using ACC0_PAT which already has the
+# 'gist' scope) -- that write isn't a Vercel deployment and has no daily
+# cap that matters at this volume. api/status.js (a Vercel function, not a
+# new deployment on each invocation) reads that same gist back live for
+# the site. This workflow's only job is to keep the gist fresh; it never
+# touches git or Vercel at all.
 
 on:
   workflow_dispatch: {}
@@ -25,7 +30,7 @@ permissions:
 
 jobs:
   refresh:
-    name: Regenerate status.json and push it to R2
+    name: Regenerate status.json and push it to the status gist
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -40,9 +45,9 @@ jobs:
       - name: Install Python Dependencies
         run: |
           python3 -m pip install --upgrade pip
-          pip install boto3 pywebpush 2>/dev/null || true
+          pip install pywebpush 2>/dev/null || true
 
-      - name: Regenerate status feed and upload to R2
+      - name: Regenerate status feed and publish to the status gist
         env:
           ACC0_PAT: ${{ secrets.ACC0_PAT }}
           ACC1_PAT: ${{ secrets.ACC1_PAT }}
@@ -53,9 +58,6 @@ jobs:
           ACC6_PAT: ${{ secrets.ACC6_PAT }}
           ACC7_PAT: ${{ secrets.ACC7_PAT }}
           ACC8_PAT: ${{ secrets.ACC8_PAT }}
-          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          R2_S3_ENDPOINT: ${{ secrets.R2_S3_ENDPOINT }}
           VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
           VAPID_PUBLIC_KEY: ${{ secrets.VAPID_PUBLIC_KEY }}
         run: |

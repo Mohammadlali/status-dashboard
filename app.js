@@ -331,36 +331,23 @@
       localStorage.setItem('claud_cloud_push_subscription', bodyStr);
     } catch (e) {}
 
-    // 1. If R2 presigned upload URL is available, PUT directly to R2
-    let uploadedR2 = false;
-    if (latestFeedData && latestFeedData.push_config && latestFeedData.push_config.r2_upload_url) {
-      try {
-        const r2Resp = await fetch(latestFeedData.push_config.r2_upload_url, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: bodyStr
-        });
-        if (r2Resp.ok) {
-          uploadedR2 = true;
-          console.log('[PWA] Subscription persisted to Cloudflare R2 via presigned URL.');
-        }
-      } catch (err) {
-        console.warn('[PWA] Direct R2 presigned PUT failed:', err);
-      }
-    }
-
-    // 2. Also attempt POST to /api/subscribe (Vercel Serverless Function)
+    // POST to /api/subscribe (Vercel Serverless Function), which persists
+    // it into the status gist server-side (a Gist write always needs an
+    // authenticated token, so there is no direct-from-browser path here).
+    let persisted = false;
     try {
-      await fetch('/api/subscribe', {
+      const resp = await fetch('/api/subscribe', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: bodyStr
       });
+      const data = await resp.json().catch(() => null);
+      persisted = !!(resp.ok && data && data.status === 'success');
     } catch (err) {
       // Non-fatal if running as purely static deployment
     }
 
-    return uploadedR2;
+    return persisted;
   }
 
   async function setupPushNotifications(registration) {

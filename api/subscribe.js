@@ -1,8 +1,20 @@
 /**
  * Vercel Serverless Function: /api/subscribe
- * Receives Web Push subscription from client and stores it in Cloudflare R2
- * if R2 environment variables are configured.
+ * Receives a Web Push subscription from the client and stores it in the
+ * fleet's status Gist (file: subscription.json).
+ *
+ * Moved off Cloudflare R2 2026-09-12: R2 is permanently unavailable on the
+ * owner's Cloudflare account (not fully provisioned, so Cloudflare blocks
+ * all TLS to the R2 endpoint account-wide -- confirmed identically across
+ * 4 separate client/runtime combinations while debugging api/status.js).
+ * Unlike R2, a Gist write always needs an authenticated Bearer token --
+ * there is no presigned-upload-URL equivalent -- so this endpoint now does
+ * the write itself server-side using ACC0_PAT (needs the 'gist' scope;
+ * same token name/value already used by Tools/collect_status_feed.py in
+ * GitHub Actions, just also added as a Vercel environment variable here).
  */
+
+const STATUS_GIST_ID = '8a1dbd864c788597da9c7750c70bd419';
 
 export default async function handler(req, res) {
   // CORS headers
@@ -32,61 +44,40 @@ export default async function handler(req, res) {
       return;
     }
 
-    const endpoint = process.env.R2_S3_ENDPOINT;
-    const accessKeyId = process.env.R2_ACCESS_KEY_ID;
-    const secretAccessKey = process.env.R2_SECRET_ACCESS_KEY;
-    const bucket = process.env.R2_BUCKET || 'claud-cloud-status';
-
-    if (!endpoint || !accessKeyId || !secretAccessKey) {
-      // Return 200 with notice if R2 credentials are only configured in GitHub Actions
-      console.warn('R2 credentials not set on Vercel; subscription acknowledged.');
+    const token = process.env.ACC0_PAT;
+    if (!token) {
+      console.warn('ACC0_PAT not set on Vercel; subscription acknowledged but not persisted.');
       res.status(200).json({
         status: 'acknowledged',
-        note: 'R2 credentials not configured on Vercel environment. Use direct R2 presigned upload if available.',
+        note: 'ACC0_PAT is not configured on Vercel yet -- subscription received but not saved.',
         received: { endpoint: subscription.endpoint.substring(0, 45) + '...' }
       });
       return;
     }
 
-    // Dynamic import of S3 client if available. The actual write goes through
-    // a presigned URL + native fetch(), not s3.send() directly -- S3Client's
-    // own bundled HTTP handler consistently fails the TLS handshake talking
-    // to R2 from inside a Vercel function (see api/status.js for the same
-    // fix and the live-test evidence); getSignedUrl() does no network I/O
-    // itself, it only computes the SigV4 signature.
-    const { S3Client, PutObjectCommand } = await import('@aws-sdk/client-s3');
-    const { getSignedUrl } = await import('@aws-sdk/s3-request-presigner');
-    const s3 = new S3Client({
-      region: 'auto',
-      endpoint: endpoint,
-      forcePathStyle: true,
-      requestChecksumCalculation: 'WHEN_REQUIRED',
-      responseChecksumValidation: 'WHEN_REQUIRED',
-      credentials: {
-        accessKeyId: accessKeyId,
-        secretAccessKey: secretAccessKey
-      }
+    const ghResp = await fetch(`https://api.github.com/gists/${STATUS_GIST_ID}`, {
+      method: 'PATCH',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/vnd.github+json',
+        'X-GitHub-Api-Version': '2022-11-28',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        files: {
+          'subscription.json': { content: JSON.stringify(subscription, null, 2) },
+        },
+      }),
     });
 
-    const body = JSON.stringify(subscription, null, 2);
-    const command = new PutObjectCommand({
-      Bucket: bucket,
-      Key: 'subscriptions/subscription.json',
-      ContentType: 'application/json'
-    });
-    const signedUrl = await getSignedUrl(s3, command, { expiresIn: 60 });
-    const putResp = await fetch(signedUrl, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body
-    });
-    if (!putResp.ok) {
-      throw new Error(`R2 PUT failed with status ${putResp.status}`);
+    if (!ghResp.ok) {
+      const detail = await ghResp.text();
+      throw new Error(`Gist PATCH failed with status ${ghResp.status}: ${detail.slice(0, 200)}`);
     }
 
     res.status(200).json({
       status: 'success',
-      message: 'Subscription stored in Cloudflare R2 successfully.',
+      message: 'Subscription stored in the status gist successfully.',
       endpoint: subscription.endpoint.substring(0, 45) + '...'
     });
   } catch (err) {

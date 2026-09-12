@@ -6,9 +6,13 @@
 Delivers RFC 8291 / RFC 8292 encrypted push notifications to subscribed
 devices (Android PWA home screen) when red/stuck operational items appear.
 
-Subscriptions are read from Cloudflare R2 (bucket: claud-cloud-status,
-key: subscriptions/subscription.json) using repo secrets
-R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_S3_ENDPOINT.
+Subscriptions are read from the fleet's status Gist (file:
+subscription.json) -- moved off Cloudflare R2 2026-09-12: R2 is
+permanently unavailable on the owner's Cloudflare account (not fully
+provisioned, so Cloudflare blocks all TLS to the R2 endpoint
+account-wide). See Tools/collect_status_feed.py's
+publish_to_gist_if_configured() for the write side and the same
+STATUS_GIST_ID.
 """
 
 import argparse
@@ -16,6 +20,11 @@ import base64
 import json
 import os
 import sys
+import urllib.error
+import urllib.request
+
+STATUS_GIST_ID = "8a1dbd864c788597da9c7750c70bd419"
+STATUS_GIST_OWNER = "Mohammadlali"
 
 MARKER = "##TBS##"
 # Public half of the current VAPID pair -- not secret, safe to source-control.
@@ -76,81 +85,27 @@ def get_vapid_instance(private_key_str=None):
         return None, f"Failed to initialize VAPID key: {str(exc)}"
 
 
-def load_subscription_from_r2(env=None):
-    """Fetch stored push subscription JSON from Cloudflare R2."""
-    env_vars = env or os.environ
-    endpoint = env_vars.get("R2_S3_ENDPOINT")
-    access_key = env_vars.get("R2_ACCESS_KEY_ID")
-    secret_key = env_vars.get("R2_SECRET_ACCESS_KEY")
-    bucket = env_vars.get("R2_BUCKET", "claud-cloud-status")
-    key = "subscriptions/subscription.json"
+def load_subscription_from_gist(env=None):
+    """Fetch stored push subscription JSON from the fleet's status Gist.
 
-    if not (endpoint and access_key and secret_key):
-        return None, "R2 credentials not present in environment"
-
+    No token needed: a Gist's raw file URL is fetchable by anyone who has
+    it, secret or not (only the listing is hidden, not the content).
+    """
+    del env  # kept for call-site compatibility; unused now
+    url = f"https://gist.githubusercontent.com/{STATUS_GIST_OWNER}/{STATUS_GIST_ID}/raw/subscription.json"
+    req = urllib.request.Request(url, headers={"Cache-Control": "no-cache"})
     try:
-        import boto3
-        from botocore.config import Config
-
-        s3 = boto3.client(
-            "s3",
-            endpoint_url=endpoint,
-            aws_access_key_id=access_key,
-            aws_secret_access_key=secret_key,
-            config=Config(signature_version="s3v4")
-        )
-
-        try:
-            resp = s3.get_object(Bucket=bucket, Key=key)
-            data = json.loads(resp["Body"].read().decode("utf-8"))
-            return data, None
-        except s3.exceptions.NoSuchKey:
-            # Also check root subscription.json
-            try:
-                resp = s3.get_object(Bucket=bucket, Key="subscription.json")
-                data = json.loads(resp["Body"].read().decode("utf-8"))
-                return data, None
-            except Exception:
-                return None, f"No subscription found at {key} in bucket '{bucket}'"
-        except Exception as exc:
-            return None, f"R2 get_object error: {str(exc)}"
-    except ImportError:
-        return None, "boto3 not installed"
-
-
-def generate_r2_presigned_upload_url(env=None, expires_in=86400):
-    """Generate presigned PUT URL allowing browser client to save subscription directly into R2."""
-    env_vars = env or os.environ
-    endpoint = env_vars.get("R2_S3_ENDPOINT")
-    access_key = env_vars.get("R2_ACCESS_KEY_ID")
-    secret_key = env_vars.get("R2_SECRET_ACCESS_KEY")
-    bucket = env_vars.get("R2_BUCKET", "claud-cloud-status")
-    key = "subscriptions/subscription.json"
-
-    if not (endpoint and access_key and secret_key):
-        return None
-
-    try:
-        import boto3
-        from botocore.config import Config
-
-        s3 = boto3.client(
-            "s3",
-            endpoint_url=endpoint,
-            aws_access_key_id=access_key,
-            aws_secret_access_key=secret_key,
-            config=Config(signature_version="s3v4")
-        )
-
-        url = s3.generate_presigned_url(
-            ClientMethod="put_object",
-            Params={"Bucket": bucket, "Key": key, "ContentType": "application/json"},
-            ExpiresIn=expires_in
-        )
-        return url
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        if not data or data.get("placeholder"):
+            return None, "No subscription saved yet in the status gist"
+        return data, None
+    except urllib.error.HTTPError as exc:
+        return None, f"Gist fetch HTTP {exc.code}: {exc.reason}"
+    except urllib.error.URLError as exc:
+        return None, f"Gist fetch network error: {exc.reason}"
     except Exception as exc:
-        print(f"Warning: Failed to generate presigned upload URL: {exc}", file=sys.stderr)
-        return None
+        return None, f"Gist fetch error: {str(exc)}"
 
 
 def send_push(subscription_info, title, body, target_url=None, tag=None, private_key=None, subject="mailto:admin@airboxvip.top", dry_run=False):
@@ -238,9 +193,9 @@ def main():
         with open(args.subscription_file, "r", encoding="utf-8") as fh:
             sub = json.load(fh)
     else:
-        sub, err = load_subscription_from_r2()
+        sub, err = load_subscription_from_gist()
         if err:
-            print(f"Notice: Could not load subscription from R2: {err}")
+            print(f"Notice: Could not load subscription from the status gist: {err}")
             emit_digest("web_push_dispatch", "skipped", {"reason": err})
             return 0
 
