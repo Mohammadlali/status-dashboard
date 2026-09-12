@@ -29,9 +29,12 @@ import base64
 import datetime
 import json
 import os
+import re
 import sys
 import urllib.error
 import urllib.request
+
+GATE_REPORT_NAME_RE = re.compile(r"^gates-\d{8}T\d{6}Z\.txt$")
 
 MARKER = "##TBS##"
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -198,7 +201,12 @@ def probe_repo_gates(token, repo):
     if err or not isinstance(data, list):
         return {"status": "unmeasured", "note": f"{repo}: gate directory query failed: {err or 'no contents'}"}
 
-    gate_files = [f for f in data if f.get("name", "").startswith("gates-") and f.get("name", "").endswith(".txt")]
+    # Match the exact gates-<8 digits>T<6 digits>Z.txt shape only -- a plain
+    # startswith/endswith check also matches any oddly-named legacy or
+    # malformed file (e.g. "gates-notahead-...txt"), and since letters sort
+    # after digits in a lexicographic max(), such a file would incorrectly
+    # win over every real timestamped report as "latest".
+    gate_files = [f for f in data if GATE_REPORT_NAME_RE.match(f.get("name", ""))]
     if not gate_files:
         return {"status": "unmeasured", "note": f"No gates-*.txt in {repo}/Reports/gates"}
 
