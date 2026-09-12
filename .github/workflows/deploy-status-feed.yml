@@ -8,16 +8,32 @@ name: Deploy Status Dashboard
 # over from the old location, so the live domain alias is unaffected by
 # the move.
 #
-# - Regenerates status.json using ACC0_PAT..ACC8_PAT.
-# - Deploys the static site (repo root) to Vercel project 'claud-cloud-status'.
+# - Deploys the static site + api/* functions (repo root) to Vercel
+#   project 'status-dashboard'.
 # - READ-FIRST Cloudflare DNS check: adds only the status subdomain CNAME if missing;
 #   never modifies or deletes any existing DNS records.
-# - Optional snapshot archival to Cloudflare R2 if R2_* credentials exist.
-# - Scheduled every 5 minutes (GitHub's real floor; 30 minutes was too slow) + manual dispatch.
+#
+# Cutover 2026-09-12: the 5-minute DATA refresh (status.json) moved to
+# Mohammadlali/agw-workers' deploy-status-feed-remote.yml, and status.json
+# itself moved out of git entirely into Cloudflare R2 -- see that
+# workflow's own header and api/status.js for why (this repo's old
+# 5-minute `vercel deploy` cycle blew through Vercel's free-tier cap of
+# 100 deployments/day). This workflow now only deploys actual SITE CODE
+# (index.html/app.js/style.css/api/**), which changes rarely -- triggered
+# by pushes to those paths, plus manual dispatch for ad-hoc redeploys.
 
 on:
-  schedule:
-    - cron: '*/5 * * * *'
+  push:
+    branches: [main]
+    paths:
+      - 'index.html'
+      - 'app.js'
+      - 'style.css'
+      - 'manifest.json'
+      - 'sw.js'
+      - 'vercel.json'
+      - 'api/**'
+      - 'icons/**'
   workflow_dispatch:
     inputs:
       subdomain:
@@ -50,86 +66,6 @@ jobs:
         with:
           ref: main
           fetch-depth: 0
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install Python Dependencies
-        run: |
-          python3 -m pip install --upgrade pip
-          pip install boto3 pywebpush 2>/dev/null || true
-
-      - name: Regenerate Status Feed JSON
-        env:
-          ACC0_PAT: ${{ secrets.ACC0_PAT }}
-          ACC1_PAT: ${{ secrets.ACC1_PAT }}
-          ACC2_PAT: ${{ secrets.ACC2_PAT }}
-          ACC3_PAT: ${{ secrets.ACC3_PAT }}
-          ACC4_PAT: ${{ secrets.ACC4_PAT }}
-          ACC5_PAT: ${{ secrets.ACC5_PAT }}
-          ACC6_PAT: ${{ secrets.ACC6_PAT }}
-          ACC7_PAT: ${{ secrets.ACC7_PAT }}
-          ACC8_PAT: ${{ secrets.ACC8_PAT }}
-          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          R2_S3_ENDPOINT: ${{ secrets.R2_S3_ENDPOINT }}
-          VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
-          VAPID_PUBLIC_KEY: ${{ secrets.VAPID_PUBLIC_KEY }}
-        run: |
-          SUBDOMAIN="${{ inputs.subdomain || 'status.airboxvip.top' }}"
-          python3 Tools/collect_status_feed.py --out status.json --subdomain "$SUBDOMAIN"
-
-      - name: Commit updated status.json
-        # Self-push credential is ACC0_PAT (this repo's own account, Mohammadlali) --
-        # not ACC6_PAT, since this repo no longer lives on ACC6. Unset checkout's
-        # own extraheader first: actions/checkout@v4 already sets one carrying the
-        # default GITHUB_TOKEN, and git's extraHeader is multi-valued, so adding a
-        # second one without unsetting the first sends BOTH and GitHub rejects the
-        # request outright ("Duplicate header: Authorization") -- this exact bug
-        # was found and fixed in the original CCP-hosted version of this workflow
-        # 2026-09-11; carried the fix forward here from day one instead of
-        # rediscovering it.
-        env:
-          GH_TOKEN: ${{ secrets.ACC0_PAT }}
-        run: |
-          BRANCH="main"
-          if git diff --quiet -- status.json; then
-            echo "status.json unchanged -- nothing to commit."
-          else
-            git config user.email "status-feed@claud-cloud.local"
-            git config user.name "Status Feed Bot"
-            git add status.json
-            git commit -m "status: regenerate status.json"
-
-            git config --local --unset-all http.https://github.com/.extraheader || true
-
-            AUTH_HEADER="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
-            MAX_RETRIES=3
-            attempt=1
-            success=false
-            while [ "$attempt" -le "$((MAX_RETRIES + 1))" ]; do
-              if git -c http.https://github.com/.extraHeader="$AUTH_HEADER" push origin "HEAD:$BRANCH"; then
-                success=true
-                break
-              fi
-              echo "Push attempt $attempt failed." >&2
-              if [ "$attempt" -le "$MAX_RETRIES" ]; then
-                git -c http.https://github.com/.extraHeader="$AUTH_HEADER" fetch origin "$BRANCH"
-                if ! git rebase "origin/$BRANCH" -X ours; then
-                  git rebase --abort
-                  echo "Error: rebase conflict on retry $attempt -- aborting." >&2
-                  break
-                fi
-              fi
-              attempt=$((attempt + 1))
-            done
-            if [ "$success" != "true" ]; then
-              echo "Error: failed to push status.json after $MAX_RETRIES retries." >&2
-              exit 1
-            fi
-          fi
 
       - name: Ensure Cloudflare DNS Record
         if: ${{ inputs.ensure_dns != false }}
@@ -198,5 +134,5 @@ jobs:
           echo "Vercel Project: claud-cloud-status"
           echo "Verification commands:"
           echo "  curl -I https://$SUBDOMAIN"
-          echo "  curl -s https://$SUBDOMAIN/status.json | jq .overview"
+          echo "  curl -s https://$SUBDOMAIN/api/status | jq .overview"
           echo "============================================="

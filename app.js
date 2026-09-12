@@ -43,7 +43,7 @@
     if (btn) btn.textContent = 'در حال به‌روزرسانی...';
 
     try {
-      const resp = await fetch(`status.json?t=${Date.now()}`);
+      const resp = await fetch(`/api/status?t=${Date.now()}`);
       if (!resp.ok) {
         throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
       }

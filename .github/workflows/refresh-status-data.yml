@@ -1,0 +1,62 @@
+name: Refresh Status Data (R2 only, no deploy)
+
+# Replaces the "Regenerate Status Feed JSON" + "Commit updated status.json"
+# + "Deploy to Vercel" cycle that used to run every 5 minutes in
+# deploy-status-feed.yml. That workflow's own vercel deploy call made this
+# a real Vercel deployment every single cycle -- 288/day at 5-minute
+# intervals, against the free-tier cap of 100 deployments/day (see
+# Team/CHANGELOG.md and the real failures in deploy-status-feed.yml's run
+# history: "Error: Resource is limited ... api-deployments-free-per-day").
+# collect_status_feed.py already writes straight to Cloudflare R2 (bucket
+# claud-cloud-status, key "status.json") via its own archive_to_r2_if_configured()
+# -- that upload isn't a Vercel deployment and has no daily cap that matters
+# at this volume. api/status.js (a Vercel function, not a new deployment on
+# each invocation) reads that same object back for the live site. This
+# workflow's only job is to keep that R2 object fresh; it never touches git
+# or Vercel at all.
+
+on:
+  workflow_dispatch: {}
+  schedule:
+    - cron: '*/5 * * * *'
+
+permissions:
+  contents: read
+
+jobs:
+  refresh:
+    name: Regenerate status.json and push it to R2
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Python Dependencies
+        run: |
+          python3 -m pip install --upgrade pip
+          pip install boto3 pywebpush 2>/dev/null || true
+
+      - name: Regenerate status feed and upload to R2
+        env:
+          ACC0_PAT: ${{ secrets.ACC0_PAT }}
+          ACC1_PAT: ${{ secrets.ACC1_PAT }}
+          ACC2_PAT: ${{ secrets.ACC2_PAT }}
+          ACC3_PAT: ${{ secrets.ACC3_PAT }}
+          ACC4_PAT: ${{ secrets.ACC4_PAT }}
+          ACC5_PAT: ${{ secrets.ACC5_PAT }}
+          ACC6_PAT: ${{ secrets.ACC6_PAT }}
+          ACC7_PAT: ${{ secrets.ACC7_PAT }}
+          ACC8_PAT: ${{ secrets.ACC8_PAT }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_S3_ENDPOINT: ${{ secrets.R2_S3_ENDPOINT }}
+          VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
+          VAPID_PUBLIC_KEY: ${{ secrets.VAPID_PUBLIC_KEY }}
+        run: |
+          python3 Tools/collect_status_feed.py --out /tmp/status.json --subdomain status.airboxvip.top
