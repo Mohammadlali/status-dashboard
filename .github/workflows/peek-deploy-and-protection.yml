@@ -8,7 +8,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 3
     env:
-      GH_TOKEN: ${{ secrets.ACC0 }}
+      GH_TOKEN: ${{ secrets.ACC0_PAT }}
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
       REPO: Mohammadlali/status-dashboard
     steps:
