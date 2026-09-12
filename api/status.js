@@ -45,6 +45,8 @@ export default async function handler(req, res) {
       region: 'auto',
       endpoint,
       forcePathStyle: true,
+      requestChecksumCalculation: 'WHEN_REQUIRED',
+      responseChecksumValidation: 'WHEN_REQUIRED',
       credentials: { accessKeyId, secretAccessKey },
     });
 
