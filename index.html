@@ -50,6 +50,7 @@
         <div class="menu-section">
           <h4 class="menu-section-title">بخش‌های صفحه</h4>
           <ul class="menu-list">
+            <li><a href="#agy-chat-section" class="menu-link" role="menuitem">💬 گفتگو با AGY</a></li>
             <li><a href="#stuck-section" class="menu-link" role="menuitem">⚠️ نیازمند توجه</a></li>
             <li><a href="#projects-section" class="menu-link" role="menuitem">📦 پروژه‌ها</a></li>
             <li><a href="#tasks-section" class="menu-link" role="menuitem">🤖 اجراهای اخیر</a></li>
@@ -88,6 +89,46 @@
           <span class="chip-num" id="chip-projects" dir="ltr">--/--</span>
           <span class="chip-label">پروژه‌های آنلاین</span>
         </div>
+      </div>
+    </section>
+
+    <!-- Chat with @agy -->
+    <section class="section" id="agy-chat-section">
+      <div class="section-header">
+        <h3 class="section-title">
+          <span class="section-icon">💬</span> گفتگو با AGY
+        </h3>
+        <span class="text-sm text-muted">پاسخ درباره‌ی شرکت، یا واگذاری یک کار واقعی</span>
+      </div>
+      <div class="card agy-chat-card">
+        <div class="agy-chat-toolbar">
+          <label for="agy-project-select" class="text-sm text-muted">پروژه:</label>
+          <select id="agy-project-select" class="agy-select">
+            <option value="">تشخیص خودکار</option>
+            <option value="control_room">Control-Room</option>
+            <option value="tbs">TEHRAN: BLIND SPOT</option>
+            <option value="airboxvip">AirboxVIP</option>
+            <option value="status_dashboard">Status Dashboard</option>
+          </select>
+          <button type="button" id="btn-agy-new-chat" class="btn-sm">گفتگوی جدید</button>
+        </div>
+        <div id="agy-chat-log" class="agy-chat-log">
+          <div class="agy-chat-empty" id="agy-chat-empty">
+            هر سوالی درباره‌ی شرکت بپرس -- AGY با آگاهی از اسناد داخلی جواب می‌دهد.
+            برای واگذاری یک کار واقعی (کد، رفع باگ، دیپلوی) در انتهای پیام
+            <code dir="ltr">@issue</code> بنویس تا یک ایشوی رسمی باز شود.
+          </div>
+        </div>
+        <form id="agy-chat-form" class="agy-chat-form">
+          <textarea
+            id="agy-chat-input"
+            class="agy-chat-input"
+            rows="2"
+            maxlength="4000"
+            placeholder="پیامت را بنویس... (برای واگذاری کار واقعی، انتها را با @issue تمام کن)"
+          ></textarea>
+          <button type="submit" id="agy-chat-send" class="btn-sm btn-agy-send">ارسال</button>
+        </form>
       </div>
     </section>
 

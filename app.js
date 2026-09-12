@@ -480,6 +480,169 @@
     });
   }
 
+  // --- Chat with @agy ---
+  // The site has no direct-LLM shortcut on purpose: every reply comes from
+  // the real @agy GitHub bot (see api/agy_create.js, api/agy_status.js).
+  // AGY_SELF_LOGIN_HINT filters OUR OWN echoed comments back out of the
+  // polled reply list (we already show what we sent optimistically) --
+  // it assumes the chat PAT's GitHub login contains "mohammadlali" (ACC0),
+  // matching every other Mohammadlali/* repo reference in this fleet.
+  const AGY_SELF_LOGIN_HINT = 'mohammadlali';
+  const AGY_POLL_INTERVAL_MS = 12000;
+  const AGY_STORAGE_KEY = 'agy_chat_issue_number';
+
+  let agyIssueNumber = null;
+  let agyPollTimer = null;
+  let agySeenReplyIds = new Set();
+
+  function agyChatEmptyHtml() {
+    return '<div class="agy-chat-empty" id="agy-chat-empty">' +
+      'هر سوالی درباره‌ی شرکت بپرس -- AGY با آگاهی از اسناد داخلی جواب می‌دهد. ' +
+      'برای واگذاری یک کار واقعی (کد، رفع باگ، دیپلوی) در انتهای پیام ' +
+      '<code dir="ltr">@issue</code> بنویس تا یک ایشوی رسمی باز شود.</div>';
+  }
+
+  function agyAppendMessage(cls, html) {
+    const log = document.getElementById('agy-chat-log');
+    if (!log) return null;
+    const empty = document.getElementById('agy-chat-empty');
+    if (empty) empty.remove();
+    const el = document.createElement('div');
+    el.className = `agy-msg ${cls}`;
+    el.innerHTML = html;
+    log.appendChild(el);
+    log.scrollTop = log.scrollHeight;
+    return el;
+  }
+
+  function agyStopPolling() {
+    if (agyPollTimer) {
+      clearInterval(agyPollTimer);
+      agyPollTimer = null;
+    }
+  }
+
+  function agyStartPolling() {
+    agyStopPolling();
+    agyPollReplies();
+    agyPollTimer = setInterval(agyPollReplies, AGY_POLL_INTERVAL_MS);
+  }
+
+  async function agyPollReplies() {
+    if (!agyIssueNumber) return;
+    try {
+      const resp = await fetch(`/api/agy_status?issue_number=${agyIssueNumber}`);
+      if (!resp.ok) return;
+      const data = await resp.json();
+      for (const reply of data.replies || []) {
+        const id = reply.html_url || `${reply.author}-${reply.created_at}`;
+        if (agySeenReplyIds.has(id)) continue;
+        agySeenReplyIds.add(id);
+        if (reply.author && reply.author.toLowerCase().includes(AGY_SELF_LOGIN_HINT)) continue;
+        agyAppendMessage(
+          'agy-msg-bot',
+          `${escapeHtml(reply.body || '')}<span class="agy-msg-meta">AGY · ${timeAgo(reply.created_at)}</span>`
+        );
+      }
+    } catch (err) {
+      console.error('agy_status poll failed:', err);
+    }
+  }
+
+  async function agySendMessage(text) {
+    const sendBtn = document.getElementById('agy-chat-send');
+    const projectSelect = document.getElementById('agy-project-select');
+
+    agyAppendMessage('agy-msg-user', escapeHtml(text));
+    if (sendBtn) sendBtn.disabled = true;
+    const pending = agyAppendMessage('agy-msg-pending', 'AGY در حال بررسی است...');
+
+    try {
+      const resp = await fetch('/api/agy_create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: text,
+          project: projectSelect ? projectSelect.value : '',
+          issue_number: agyIssueNumber,
+        }),
+      });
+      const data = await resp.json();
+      if (pending) pending.remove();
+
+      if (!resp.ok) {
+        agyAppendMessage('agy-msg-system', `خطا: ${escapeHtml(data.error || 'نامشخص')}`);
+        return;
+      }
+
+      if (data.status === 'created') {
+        agyIssueNumber = data.issue_number;
+        agySeenReplyIds.clear();
+        try { localStorage.setItem(AGY_STORAGE_KEY, String(agyIssueNumber)); } catch (e) { /* ignore */ }
+        const label = data.mode === 'task' ? 'ایشوی جدید (کار واقعی)' : 'گفتگوی جدید';
+        agyAppendMessage(
+          'agy-msg-system',
+          `${label} باز شد -- <a href="${data.issue_url}" target="_blank" rel="noopener">Issue #${data.issue_number}</a>`
+        );
+      }
+      agyStartPolling();
+    } catch (err) {
+      if (pending) pending.remove();
+      agyAppendMessage('agy-msg-system', `خطای شبکه: ${escapeHtml(err.message)}`);
+    } finally {
+      if (sendBtn) sendBtn.disabled = false;
+    }
+  }
+
+  function agyResetChat() {
+    agyStopPolling();
+    agyIssueNumber = null;
+    agySeenReplyIds.clear();
+    try { localStorage.removeItem(AGY_STORAGE_KEY); } catch (e) { /* ignore */ }
+    const log = document.getElementById('agy-chat-log');
+    if (log) log.innerHTML = agyChatEmptyHtml();
+  }
+
+  function initAgyChat() {
+    const form = document.getElementById('agy-chat-form');
+    const input = document.getElementById('agy-chat-input');
+    const newChatBtn = document.getElementById('btn-agy-new-chat');
+    if (!form || !input) return;
+
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const text = input.value.trim();
+      if (!text) return;
+      input.value = '';
+      agySendMessage(text);
+    });
+
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        form.requestSubmit();
+      }
+    });
+
+    if (newChatBtn) newChatBtn.addEventListener('click', agyResetChat);
+
+    // Resume a conversation that survived a page reload -- AGY's own
+    // dispatch can take minutes, longer than a user is likely to keep a
+    // tab open and waiting.
+    let savedIssue = null;
+    try { savedIssue = localStorage.getItem(AGY_STORAGE_KEY); } catch (e) { /* ignore */ }
+    if (savedIssue) {
+      agyIssueNumber = parseInt(savedIssue, 10) || null;
+      if (agyIssueNumber) {
+        agyAppendMessage(
+          'agy-msg-system',
+          `ادامه‌ی گفتگوی قبلی -- <a href="https://github.com/Mohammadlali/control-room/issues/${agyIssueNumber}" target="_blank" rel="noopener">Issue #${agyIssueNumber}</a>`
+        );
+        agyStartPolling();
+      }
+    }
+  }
+
   function initMenu() {
     const toggleBtn = document.getElementById('btn-menu-toggle');
     const panel = document.getElementById('menu-panel');
@@ -519,6 +682,7 @@
     loadStatusFeed();
     initPwa();
     initMenu();
+    initAgyChat();
 
     const btn = document.getElementById('btn-refresh');
     if (btn) btn.addEventListener('click', loadStatusFeed);
