@@ -1,0 +1,63 @@
+name: Check and fix Vercel deployment protection (SSO wall)
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Get current project protection settings
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -e
+          if [ -z "$VERCEL_TOKEN" ]; then
+            echo "::error::VERCEL_TOKEN not set"
+            exit 1
+          fi
+          curl -s -H "Authorization: Bearer $VERCEL_TOKEN" "https://api.vercel.com/v9/projects/claud-cloud-status" > /tmp/project_before.json
+          echo "=== settings before ==="
+          python3 -c "import json; d = json.load(open('/tmp/project_before.json')); print('id:', d.get('id')); print('name:', d.get('name')); print('ssoProtection:', json.dumps(d.get('ssoProtection'))); print('passwordProtection:', json.dumps(d.get('passwordProtection')))"
+
+      - name: Disable SSO protection so the production site is publicly viewable
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -e
+          CODE=$(curl -s -o /tmp/patch_result.json -w "%{http_code}" -X PATCH -H "Authorization: Bearer $VERCEL_TOKEN" -H "Content-Type: application/json" -d '{"ssoProtection": null}' "https://api.vercel.com/v9/projects/claud-cloud-status")
+          echo "HTTP $CODE"
+          cat /tmp/patch_result.json
+          if [ "$CODE" != "200" ]; then
+            echo "::error::PATCH failed"
+            exit 1
+          fi
+
+      - name: Verify the setting actually changed (read it back, don't trust the PATCH response alone)
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -e
+          sleep 3
+          curl -s -H "Authorization: Bearer $VERCEL_TOKEN" "https://api.vercel.com/v9/projects/claud-cloud-status" > /tmp/project_after.json
+          echo "=== settings after ==="
+          python3 -c "import json,sys; d = json.load(open('/tmp/project_after.json')); sso = d.get('ssoProtection'); print('ssoProtection:', json.dumps(sso)); sys.exit(1) if sso is not None else print('CONFIRMED: ssoProtection is now null')"
+
+      - name: Confirm the live site is now publicly reachable
+        run: |
+          set -e
+          for i in $(seq 1 10); do
+            CODE=$(curl -s -o /tmp/site_body.txt -w "%{http_code}" https://status.airboxvip.top/status.json)
+            echo "attempt $i: HTTP $CODE"
+            if [ "$CODE" == "200" ]; then
+              echo "=== first 300 bytes of status.json ==="
+              head -c 300 /tmp/site_body.txt
+              echo ""
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::Site still not returning 200 after protection fix"
+          cat /tmp/site_body.txt
+          exit 1
