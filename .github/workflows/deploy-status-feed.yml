@@ -15,12 +15,25 @@ name: Deploy Status Dashboard
 #
 # Cutover 2026-09-12: the 5-minute DATA refresh (status.json) moved to
 # Mohammadlali/agw-workers' deploy-status-feed-remote.yml, and status.json
-# itself moved out of git entirely into Cloudflare R2 -- see that
+# itself moved out of git entirely into a GitHub Gist -- see that
 # workflow's own header and api/status.js for why (this repo's old
 # 5-minute `vercel deploy` cycle blew through Vercel's free-tier cap of
 # 100 deployments/day). This workflow now only deploys actual SITE CODE
 # (index.html/app.js/style.css/api/**), which changes rarely -- triggered
 # by pushes to those paths, plus manual dispatch for ad-hoc redeploys.
+#
+# Second cutover, same day: the OLD Vercel account/project this workflow
+# used to deploy to directly (secrets.VERCEL_TOKEN) hit that same
+# deployments-per-day cap and is blocked for ~24h. The owner's new Vercel
+# account/project (domain status2.airboxvip.top for now) is the working
+# deploy target going forward, but a GitHub secret is write-only -- there
+# is no way to copy the new project's credentials onto this repo without
+# the owner re-entering them by hand. So instead of deploying here
+# directly, this workflow now dispatches
+# Mohammadlali/agw-workers' deploy-status-dashboard-remote.yml (which
+# already holds the new project's credentials as _NEW-suffixed secrets,
+# proven working by test-agy-chat-live.yml) via the Actions API, using
+# this repo's own ACC0_PAT (already present here for the Gist publish).
 
 on:
   push:
@@ -76,63 +89,42 @@ jobs:
           SUBDOMAIN="${{ inputs.subdomain || 'status.airboxvip.top' }}"
           python3 Tools/ensure_cloudflare_dns.py --zone airboxvip.top --subdomain "$SUBDOMAIN" --target cname.vercel-dns.com
 
-      - name: Deploy to Vercel
+      - name: Trigger remote deploy to the new Vercel project (agw-workers)
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.deploy_vercel != false }}
         env:
-          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          ACC0_PAT: ${{ secrets.ACC0_PAT }}
         run: |
-          SUBDOMAIN="${{ inputs.subdomain || 'status.airboxvip.top' }}"
-          if [ -z "$VERCEL_TOKEN" ]; then
-            echo "VERCEL_TOKEN not provided -- skipping Vercel deployment."
-            exit 0
-          fi
-          echo "Deploying repo root to Vercel project 'claud-cloud-status'..."
-          DEPLOY_OUTPUT=""
-          if npx --yes vercel build --prod --token="$VERCEL_TOKEN" --yes; then
-            DEPLOY_OUTPUT=$(npx --yes vercel deploy --prebuilt --prod --token="$VERCEL_TOKEN" --yes)
-          else
-            DEPLOY_OUTPUT=$(timeout 180 npx --yes vercel deploy --prod --token="$VERCEL_TOKEN" --yes || echo "")
-          fi
-          echo "Deployment raw output: $DEPLOY_OUTPUT"
-
-          DEPLOY_URL=$(echo "$DEPLOY_OUTPUT" | grep -Eo 'https://[a-zA-Z0-9.-]+\.vercel\.app' | head -n 1)
-          if [ -z "$DEPLOY_URL" ]; then
-            if [ -n "$DEPLOY_OUTPUT" ]; then
-              DEPLOY_URL="$DEPLOY_OUTPUT"
-            else
-              echo "::error::No deployment URL retrieved; cannot assign domain alias."
-              exit 1
-            fi
-          fi
-
-          # Vercel alias-readiness race condition: see the original CCP-hosted
-          # workflow's history (run 34619809977) -- a fresh deployment is not
-          # always immediately "ready" for aliasing. Retry with backoff and
-          # fail the job for real if it never succeeds; never silently swallow
-          # with `|| true`.
-          echo "Assigning domain alias $SUBDOMAIN to $DEPLOY_URL..."
-          ALIAS_OK=false
-          for attempt in $(seq 1 24); do
-            if npx --yes vercel alias set "$DEPLOY_URL" "$SUBDOMAIN" --token="$VERCEL_TOKEN"; then
-              ALIAS_OK=true
-              break
-            fi
-            echo "Alias attempt $attempt failed (deployment likely not ready yet); retrying in 15s..."
-            sleep 15
-          done
-          if [ "$ALIAS_OK" != "true" ]; then
-            echo "::error::Could not assign domain alias after 24 attempts (6 minutes); $SUBDOMAIN still points at the previous deployment."
+          set -e
+          if [ -z "$ACC0_PAT" ]; then
+            echo "::error::secrets.ACC0_PAT is not set on status-dashboard -- cannot dispatch the remote deploy on agw-workers."
             exit 1
           fi
+          SHA="${{ github.sha }}"
+          CODE=$(curl -sS -o /tmp/dispatch_resp.txt -w "%{http_code}" -X POST \
+            -H "Authorization: Bearer $ACC0_PAT" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/Mohammadlali/agw-workers/actions/workflows/deploy-status-dashboard-remote.yml/dispatches" \
+            -d "{\"ref\":\"main\",\"inputs\":{\"commit_sha\":\"$SHA\"}}")
+          echo "dispatch HTTP $CODE"
+          cat /tmp/dispatch_resp.txt
+          if [ "$CODE" != "204" ]; then
+            echo "::error::Failed to dispatch deploy-status-dashboard-remote.yml on agw-workers"
+            exit 1
+          fi
+          echo "Dispatched deploy of commit $SHA -- see https://github.com/Mohammadlali/agw-workers/actions/workflows/deploy-status-dashboard-remote.yml"
 
       - name: Deployment Verification Summary
         run: |
-          SUBDOMAIN="${{ inputs.subdomain || 'status.airboxvip.top' }}"
           echo "============================================="
-          echo "STATUS DASHBOARD DEPLOYMENT COMPLETED"
-          echo "Target Subdomain: https://$SUBDOMAIN"
-          echo "Vercel Project: claud-cloud-status"
+          echo "STATUS DASHBOARD DEPLOYMENT DISPATCHED"
+          echo "The actual Vercel build+deploy now runs on agw-workers"
+          echo "(deploy-status-dashboard-remote.yml), against the owner's new"
+          echo "Vercel project, since the old one this repo used to deploy to"
+          echo "directly is over its free-tier daily deployment cap."
+          echo "Current working domain: https://status2.airboxvip.top"
+          echo "(becomes status.airboxvip.top once the owner migrates DNS)"
           echo "Verification commands:"
-          echo "  curl -I https://$SUBDOMAIN"
-          echo "  curl -s https://$SUBDOMAIN/api/status | jq .overview"
+          echo "  curl -I https://status2.airboxvip.top"
+          echo "  curl -s https://status2.airboxvip.top/api/status | jq .overview"
           echo "============================================="
