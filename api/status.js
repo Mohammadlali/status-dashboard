@@ -13,6 +13,16 @@
  * deployment cap at all, only against Vercel's much higher (effectively
  * unlimited for this traffic) function-invocation limits. Actual code
  * deploys now only happen when the site's own files change.
+ *
+ * The actual object fetch goes through a presigned URL + native fetch(),
+ * not S3Client.send() directly: live-tested against the real R2 endpoint
+ * from inside a Vercel function, S3Client's own bundled HTTP handler
+ * (Node's https module under the SDK's connection pooling) consistently
+ * failed the TLS handshake (SSL alert 40) talking to R2, while the same
+ * credentials work fine from a plain GitHub Actions runner (boto3) and a
+ * plain fetch() call. getSignedUrl() does no network I/O itself -- it
+ * only computes the SigV4 signature -- so S3Client is used purely as a
+ * signer here; the real GET rides Vercel's native fetch implementation.
  */
 
 export default async function handler(req, res) {
@@ -41,6 +51,7 @@ export default async function handler(req, res) {
     }
 
     const { S3Client, GetObjectCommand } = await import('@aws-sdk/client-s3');
+    const { getSignedUrl } = await import('@aws-sdk/s3-request-presigner');
     const s3 = new S3Client({
       region: 'auto',
       endpoint,
@@ -50,16 +61,23 @@ export default async function handler(req, res) {
       credentials: { accessKeyId, secretAccessKey },
     });
 
-    const result = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: 'status.json' }));
-    const body = await result.Body.transformToString();
+    const command = new GetObjectCommand({ Bucket: bucket, Key: 'status.json' });
+    const signedUrl = await getSignedUrl(s3, command, { expiresIn: 60 });
+
+    const r2Resp = await fetch(signedUrl);
+    if (r2Resp.status === 404) {
+      res.status(404).json({ error: 'status.json not found in R2 yet -- has refresh-status-data.yml run at least once?' });
+      return;
+    }
+    if (!r2Resp.ok) {
+      res.status(502).json({ error: 'R2 returned an error for status.json', status: r2Resp.status });
+      return;
+    }
+    const body = await r2Resp.text();
 
     res.setHeader('Content-Type', 'application/json');
     res.status(200).send(body);
   } catch (err) {
-    if (err.name === 'NoSuchKey') {
-      res.status(404).json({ error: 'status.json not found in R2 yet -- has refresh-status-data.yml run at least once?' });
-      return;
-    }
     console.error('status error:', err);
     res.status(502).json({ error: 'Failed to read status.json from R2', detail: err.message });
   }

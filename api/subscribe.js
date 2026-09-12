@@ -48,8 +48,14 @@ export default async function handler(req, res) {
       return;
     }
 
-    // Dynamic import of S3 client if available
+    // Dynamic import of S3 client if available. The actual write goes through
+    // a presigned URL + native fetch(), not s3.send() directly -- S3Client's
+    // own bundled HTTP handler consistently fails the TLS handshake talking
+    // to R2 from inside a Vercel function (see api/status.js for the same
+    // fix and the live-test evidence); getSignedUrl() does no network I/O
+    // itself, it only computes the SigV4 signature.
     const { S3Client, PutObjectCommand } = await import('@aws-sdk/client-s3');
+    const { getSignedUrl } = await import('@aws-sdk/s3-request-presigner');
     const s3 = new S3Client({
       region: 'auto',
       endpoint: endpoint,
@@ -62,14 +68,21 @@ export default async function handler(req, res) {
       }
     });
 
+    const body = JSON.stringify(subscription, null, 2);
     const command = new PutObjectCommand({
       Bucket: bucket,
       Key: 'subscriptions/subscription.json',
-      Body: JSON.stringify(subscription, null, 2),
       ContentType: 'application/json'
     });
-
-    await s3.send(command);
+    const signedUrl = await getSignedUrl(s3, command, { expiresIn: 60 });
+    const putResp = await fetch(signedUrl, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body
+    });
+    if (!putResp.ok) {
+      throw new Error(`R2 PUT failed with status ${putResp.status}`);
+    }
 
     res.status(200).json({
       status: 'success',
