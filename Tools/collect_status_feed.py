@@ -193,6 +193,8 @@ def probe_repo_gates(token, repo):
 
     url = f"/repos/{repo}/contents/Reports/gates"
     data, err = fetch_github_api(url, token=token)
+    if err and err.startswith("HTTP 404"):
+        return {"status": "not_applicable", "note": "این پروژه گزارش گیت خودکار (Reports/gates) ندارد"}
     if err or not isinstance(data, list):
         return {"status": "unmeasured", "note": f"{repo}: gate directory query failed: {err or 'no contents'}"}
 
