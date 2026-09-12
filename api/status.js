@@ -44,6 +44,7 @@ export default async function handler(req, res) {
     const s3 = new S3Client({
       region: 'auto',
       endpoint,
+      forcePathStyle: true,
       credentials: { accessKeyId, secretAccessKey },
     });
 
