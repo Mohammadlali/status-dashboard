@@ -89,7 +89,7 @@ PROJECTS = [
         "name": "AirboxVIP Coffeenet",
         "repo": "momonakikugava-pixel/AirboxVIP_Coffeenet",
         "pat_env": "ACC1_PAT",
-        "role": "ربات ووچر قهوه‌نت"
+        "role": "کافی‌نت ایرباکس وی‌آی‌پی"
     },
     {
         "key": "status_dashboard",
