@@ -1,26 +1,34 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Cross-account status feed collector for Claud-Cloud-Project operations.
+"""Per-project status feed collector for the fleet's tracked products.
 
-Pulls status across all 9 accounts using ACC0_PAT..ACC8_PAT:
-- Recent commits across primary and agw-worker repositories.
+For each project in PROJECTS, using that project's own account PAT:
+- Recent commits.
 - Open, blocked, and stale issues.
-- Latest @agy task outcomes (success/failure, conclusion from workflow runs).
-- Gate health from Reports/gates/*.txt (and Control-Room if reachable).
-- Anything red or stuck (failed runs, blocked tasks, stale issues, push losses).
-- Enforces the project doctrine: quiet green when nominal, prominent red alerts when stuck.
+- Latest Actions run outcomes (success/failure).
+- Gate health from that repo's own Reports/gates/*.txt, read live via the
+  GitHub API (never local disk -- this collector runs from
+  Mohammadlali/status-dashboard, which is not any of the repos it reports on).
+- Anything red or stuck (failed runs, blocked issues, stale issues, failing
+  gates) rolled into one alert list.
+- Enforces the project doctrine: quiet green when nominal, prominent red
+  alerts when stuck.
 - Optionally archives snapshots to Cloudflare R2 if R2_* credentials are provided.
+
+This is deliberately project-centric, not account-centric: two accounts in
+this fleet (ACC0, ACC6) each host more than one product, so "one card per
+account" cannot answer "how is project X doing" on its own. PROJECTS names
+each product once, independent of which account happens to host it.
 
 Usage:
     python3 Tools/collect_status_feed.py [--out StatusFeed/status.json] [--subdomain status.airboxvip.top]
 """
 
 import argparse
+import base64
 import datetime
-import glob
 import json
 import os
-import re
 import sys
 import urllib.error
 import urllib.request
@@ -54,80 +62,39 @@ except ImportError:
         send_push = None
         DEFAULT_VAPID_PUBLIC = "BG_JbNQKSkg6lQHIYAuJdrfXVMr4lttYSmouPlhSJ2tMQkKnFtJdDKaIFrd02oAn16BbE7sHOyzFkNijd-gELvA"
 
-# 9 accounts and their repositories (matching Team/ACCOUNTS.md and Tools/dispatch_backlog.py)
-ACCOUNTS = [
+# Every product this fleet runs, named once, independent of which of the 9
+# accounts happens to host it. ACC0 hosts both Control-Room and this
+# dashboard; ACC6 hosts Claud-Cloud-Project (TEHRAN: BLIND SPOT) since the
+# 2026-09-11 migration -- an account-shaped list cannot represent that.
+PROJECTS = [
     {
-        "index": 0,
-        "owner": "Mohammadlali",
-        "pat_env": "ACC0_PAT",
-        "primary_repo": "Mohammadlali/Claud-Cloud-Project",
-        "worker_repo": "Mohammadlali/agw-workers",
-        "role": "Trunk / Platform & Gateway"
-    },
-    {
-        "index": 1,
-        "owner": "momonakikugava-pixel",
-        "pat_env": "ACC1_PAT",
-        "primary_repo": "momonakikugava-pixel/AirboxVIP_Coffeenet",
-        "worker_repo": "momonakikugava-pixel/agw-workers",
-        "role": "AirboxVIP Coffeenet / Voucher Bot"
-    },
-    {
-        "index": 2,
-        "owner": "lali94m-max",
-        "pat_env": "ACC2_PAT",
-        "primary_repo": None,
-        "worker_repo": "lali94m-max/agw-workers",
-        "role": "Fleet Worker"
-    },
-    {
-        "index": 3,
-        "owner": "ngocgminh5-debug",
-        "pat_env": "ACC3_PAT",
-        "primary_repo": None,
-        "worker_repo": "ngocgminh5-debug/agw-workers",
-        "role": "Fleet Worker (Debug / Pro)"
-    },
-    {
-        "index": 4,
-        "owner": "hmmletssee7-design",
-        "pat_env": "ACC4_PAT",
-        "primary_repo": None,
-        "worker_repo": "hmmletssee7-design/agw-workers",
-        "role": "Fleet Worker (Design)"
-    },
-    {
-        "index": 5,
-        "owner": "kidding602",
-        "pat_env": "ACC5_PAT",
-        "primary_repo": None,
-        "worker_repo": "kidding602/agw-workers",
-        "role": "Fleet Worker"
-    },
-    {
-        "index": 6,
-        "owner": "mohammadlali0707-stack",
+        "key": "tbs",
+        "name": "TEHRAN: BLIND SPOT",
+        "repo": "mohammadlali0707-stack/Claud-Cloud-Project",
         "pat_env": "ACC6_PAT",
-        "primary_repo": "mohammadlali0707-stack/Control-Room",
-        "worker_repo": "mohammadlali0707-stack/agw-workers",
-        "role": "Control-Room / Ops Hub"
+        "role": "ویژوال ناول فارسی (Ren'Py) -- تنها محصول میزبانی‌شده روی ACC6"
     },
     {
-        "index": 7,
-        "owner": "mohammad97okk",
-        "pat_env": "ACC7_PAT",
-        "primary_repo": None,
-        "worker_repo": "mohammad97okk/agw-workers",
-        "role": "Fleet Worker"
+        "key": "control_room",
+        "name": "Control-Room",
+        "repo": "Mohammadlali/control-room",
+        "pat_env": "ACC0_PAT",
+        "role": "هماهنگی سازمانی و پل‌های cross-account، میزبانی روی ACC0"
     },
     {
-        "index": 8,
-        "owner": "moradzahra85-png",
-        "pat_env": "ACC8_PAT",
-        "primary_repo": None,
-        "worker_repo": "moradzahra85-png/agw-workers",
-        "role": "Fleet Worker"
-    }
+        "key": "airboxvip",
+        "name": "AirboxVIP Coffeenet",
+        "repo": "momonakikugava-pixel/AirboxVIP_Coffeenet",
+        "pat_env": "ACC1_PAT",
+        "role": "ربات ووچر قهوه‌نت"
+    },
+    {
+        "key": "status_dashboard",
+        "name": "Status Dashboard",
+        "repo": "Mohammadlali/status-dashboard",
+        "pat_env": "ACC0_PAT",
+        "role": "همین داشبورد وضعیت که در حال مشاهده‌اش هستید"
+    },
 ]
 
 
@@ -178,380 +145,293 @@ def parse_iso_datetime(dt_str):
         return None
 
 
-def extract_gate_file_timestamp(path):
-    """Extract chronological timestamp (YYYYMMDDTHHMMSSZ) from filename."""
-    fn = os.path.basename(path)
-    m = re.search(r"(\d{8}T\d{6}Z)", fn)
-    if m:
-        return m.group(1)
-    return fn
-
-
-def collect_latest_gate_report(reports_dir=None):
-    """Parse the newest Reports/gates/gates-*.txt log sorted chronologically."""
-    base_dir = reports_dir or os.path.join(ROOT, "Reports", "gates")
-    if not os.path.isdir(base_dir):
-        return {
-            "status": "unmeasured",
-            "source": "none",
-            "total": 0,
-            "pass": 0,
-            "fail": 0,
-            "unmeasured": 0,
-            "failing_gates": [],
-            "commit": None,
-            "note": "Gates directory not found"
-        }
-
-    pattern = os.path.join(base_dir, "gates-*.txt")
-    raw_files = glob.glob(pattern)
-    if not raw_files:
-        return {
-            "status": "unmeasured",
-            "source": "none",
-            "total": 0,
-            "pass": 0,
-            "fail": 0,
-            "unmeasured": 0,
-            "failing_gates": [],
-            "commit": None,
-            "note": "No gates-*.txt reports found"
-        }
-
-    # Sort strictly by ISO-like timestamp in filename descending
-    files = sorted(raw_files, key=extract_gate_file_timestamp, reverse=True)
-    latest_path = files[0]
-    filename = os.path.basename(latest_path)
-
-    pass_count = 0
-    fail_count = 0
-    unmeasured_count = 0
-    failing_gates = []
+def parse_gate_suite_report_text(text):
+    """Parse a gates-*.txt transcript's real ##TBS## gate_suite line into
+    pass/fail/unmeasured/commit."""
+    pass_count = fail_count = unmeasured_count = 0
     cited_commit = None
     overall_status = "pass"
 
-    try:
-        with open(latest_path, "r", encoding="utf-8", errors="replace") as fh:
-            lines = fh.readlines()
+    for line in text.splitlines():
+        if MARKER not in line:
+            continue
+        idx = line.find(MARKER)
+        raw = line[idx + len(MARKER):].strip()
+        try:
+            obj = json.loads(raw)
+        except Exception:
+            continue
+        if obj.get("probe") != "gate_suite":
+            continue
+        data = obj.get("data", {})
+        pass_count = data.get("pass", pass_count)
+        fail_count = data.get("fail", fail_count)
+        unmeasured_count = data.get("unmeasured", unmeasured_count)
+        cited_commit = data.get("commit", cited_commit)
+        overall_status = obj.get("status", overall_status)
 
-        for line in lines:
-            if "##TBS##" in line:
-                idx = line.find("##TBS##")
-                raw = line[idx + len("##TBS##"):].strip()
-                try:
-                    obj = json.loads(raw)
-                    if obj.get("probe") == "gate_suite":
-                        data = obj.get("data", {})
-                        pass_count = data.get("pass", pass_count)
-                        fail_count = data.get("fail", fail_count)
-                        unmeasured_count = data.get("unmeasured", unmeasured_count)
-                        cited_commit = data.get("commit", cited_commit)
-                        not_pass = data.get("not_pass", [])
-                        if not_pass:
-                            failing_gates.extend(not_pass)
-                        overall_status = obj.get("status", overall_status)
-                except Exception:
-                    pass
-            elif line.startswith("[") and "fail" in line:
-                failing_gates.append(line.strip())
+    total = pass_count + fail_count + unmeasured_count
+    if fail_count > 0 or unmeasured_count > 0:
+        overall_status = "fail"
 
-        total = pass_count + fail_count + unmeasured_count
-        if total == 0:
-            for line in lines:
-                m = re.match(r"^(\d+)\s+gates:\s+(\d+)\s+pass,\s+(\d+)\s+fail,\s+(\d+)\s+unmeasured", line)
-                if m:
-                    total = int(m.group(1))
-                    pass_count = int(m.group(2))
-                    fail_count = int(m.group(3))
-                    unmeasured_count = int(m.group(4))
-                    break
+    return {
+        "status": overall_status,
+        "total": total,
+        "pass": pass_count,
+        "fail": fail_count,
+        "unmeasured": unmeasured_count,
+        "commit": cited_commit,
+    }
 
-        if fail_count > 0 or unmeasured_count > 0:
-            overall_status = "fail"
 
+def probe_repo_gates(token, repo):
+    """Live gate health for a repo, read via the GitHub API rather than
+    local disk -- this collector runs from Mohammadlali/status-dashboard,
+    which is never the repo whose gates it is checking."""
+    if not token:
+        return {"status": "unmeasured", "note": "no token available for this project"}
+
+    url = f"/repos/{repo}/contents/Reports/gates"
+    data, err = fetch_github_api(url, token=token)
+    if err or not isinstance(data, list):
+        return {"status": "unmeasured", "note": f"{repo}: gate directory query failed: {err or 'no contents'}"}
+
+    gate_files = [f for f in data if f.get("name", "").startswith("gates-") and f.get("name", "").endswith(".txt")]
+    if not gate_files:
+        return {"status": "unmeasured", "note": f"No gates-*.txt in {repo}/Reports/gates"}
+
+    latest_file = sorted(gate_files, key=lambda x: x.get("name", ""), reverse=True)[0]
+
+    file_meta, ferr = fetch_github_api(latest_file.get("url"), token=token)
+    if ferr or not isinstance(file_meta, dict) or "content" not in file_meta:
         return {
-            "status": overall_status,
-            "source": filename,
-            "total": total or 54,
-            "pass": pass_count,
-            "fail": fail_count,
-            "unmeasured": unmeasured_count,
-            "failing_gates": list(set(failing_gates)),
-            "commit": cited_commit,
-            "report_file": filename
+            "status": "unmeasured",
+            "source": latest_file.get("name"),
+            "url": latest_file.get("html_url"),
+            "note": f"could not read file content: {ferr or 'no content field'}"
         }
+
+    try:
+        text = base64.b64decode(file_meta["content"]).decode("utf-8", errors="replace")
     except Exception as exc:
         return {
-            "status": "error",
-            "source": filename,
-            "total": 0,
-            "pass": 0,
-            "fail": 0,
-            "unmeasured": 0,
-            "failing_gates": [f"Read error: {str(exc)}"],
-            "commit": None,
-            "note": str(exc)
+            "status": "unmeasured",
+            "source": latest_file.get("name"),
+            "url": latest_file.get("html_url"),
+            "note": f"decode error: {exc}"
         }
 
+    parsed = parse_gate_suite_report_text(text)
+    parsed["source"] = latest_file.get("name")
+    parsed["url"] = latest_file.get("html_url")
+    return parsed
 
-def collect_account_data(acc, env_tokens=None, now_utc=None):
-    """Collect commits, issues, and workflow runs for one account."""
+
+def collect_project_status(project, env_tokens=None, now_utc=None):
+    """One project's full standalone status: gate health, recent commits,
+    open/blocked/stale issues, and recent Actions runs (with failures
+    flagged) -- all through that project's own account PAT."""
     tokens = env_tokens or os.environ
     now = now_utc or datetime.datetime.now(datetime.timezone.utc)
+    token = tokens.get(project["pat_env"], "").strip()
+    repo = project["repo"]
 
-    idx = acc["index"]
-    owner = acc["owner"]
-    pat_env = acc["pat_env"]
-    token = tokens.get(pat_env, "").strip()
-
-    repos_to_check = []
-    if acc["primary_repo"]:
-        repos_to_check.append(acc["primary_repo"])
-    if acc["worker_repo"] and acc["worker_repo"] not in repos_to_check:
-        repos_to_check.append(acc["worker_repo"])
-
-    acc_result = {
-        "index": idx,
-        "owner": owner,
-        "role": acc["role"],
-        "token_env": pat_env,
+    result = {
+        "key": project["key"],
+        "name": project["name"],
+        "repo": repo,
+        "role": project["role"],
         "token_available": bool(token),
-        "primary_repo": acc["primary_repo"],
-        "worker_repo": acc["worker_repo"],
-        "repos": repos_to_check,
+        "status": "offline_unconfigured",
+        "gates": {"status": "unmeasured", "note": f"{project['pat_env']} not available"},
         "commits": [],
         "open_issues": [],
         "blocked_issues": [],
         "stale_issues": [],
-        "agy_tasks": [],
+        "recent_runs": [],
         "failed_runs": [],
-        "status": "green",
-        "errors": []
+        "errors": [],
     }
-
     if not token:
-        acc_result["status"] = "offline_unconfigured"
-        acc_result["note"] = f"Secret {pat_env} is not injected into current environment"
-        return acc_result
+        result["note"] = f"Secret {project['pat_env']} is not injected into current environment"
+        return result
 
-    for repo in repos_to_check:
-        # 1. Recent Commits
-        commits_data, err = fetch_github_api(f"/repos/{repo}/commits?per_page=5", token=token)
-        if err:
-            acc_result["errors"].append(f"{repo} commits: {err}")
-        elif isinstance(commits_data, list):
-            for c in commits_data:
-                sha = c.get("sha", "")[:7]
-                commit_obj = c.get("commit", {})
-                msg = commit_obj.get("message", "").split("\n")[0]
-                author_name = commit_obj.get("author", {}).get("name", owner)
-                date_str = commit_obj.get("author", {}).get("date", "")
-                acc_result["commits"].append({
-                    "repo": repo,
-                    "sha": sha,
-                    "message": msg[:90],
-                    "author": author_name,
-                    "date": date_str,
-                    "html_url": c.get("html_url", f"https://github.com/{repo}/commit/{sha}")
-                })
+    result["gates"] = probe_repo_gates(token, repo)
 
-        # 2. Open Issues
-        issues_data, err = fetch_github_api(f"/repos/{repo}/issues?state=open&per_page=15", token=token)
-        if err:
-            acc_result["errors"].append(f"{repo} issues: {err}")
-        elif isinstance(issues_data, list):
-            for iss in issues_data:
-                if "pull_request" in iss:
-                    continue
+    # Recent commits
+    commits_data, err = fetch_github_api(f"/repos/{repo}/commits?per_page=5", token=token)
+    if err:
+        result["errors"].append(f"commits: {err}")
+    elif isinstance(commits_data, list):
+        for c in commits_data:
+            sha = c.get("sha", "")[:7]
+            commit_obj = c.get("commit", {})
+            result["commits"].append({
+                "sha": sha,
+                "message": commit_obj.get("message", "").split("\n")[0][:90],
+                "author": commit_obj.get("author", {}).get("name", project["name"]),
+                "date": commit_obj.get("author", {}).get("date", ""),
+                "html_url": c.get("html_url", f"https://github.com/{repo}/commit/{sha}")
+            })
 
-                num = iss.get("number")
-                title = iss.get("title", "")
-                body = iss.get("body", "") or ""
-                labels = [lb.get("name", "").lower() for lb in iss.get("labels", [])]
-                created_at_str = iss.get("created_at", "")
-                updated_at_str = iss.get("updated_at", "")
-                comments_count = iss.get("comments", 0)
-                html_url = iss.get("html_url", f"https://github.com/{repo}/issues/{num}")
+    # Open / blocked / stale issues
+    issues_data, err = fetch_github_api(f"/repos/{repo}/issues?state=open&per_page=15", token=token)
+    if err:
+        result["errors"].append(f"issues: {err}")
+    elif isinstance(issues_data, list):
+        for iss in issues_data:
+            if "pull_request" in iss:
+                continue
 
-                is_blocked = (
-                    "blocked" in labels or
-                    "[blocked]" in title.lower() or
-                    "blocked:" in title.lower() or
-                    "blocked by" in body.lower()
-                )
+            num = iss.get("number")
+            title = iss.get("title", "")
+            body = iss.get("body", "") or ""
+            labels = [lb.get("name", "").lower() for lb in iss.get("labels", [])]
+            updated_at_str = iss.get("updated_at", "")
+            comments_count = iss.get("comments", 0)
+            html_url = iss.get("html_url", f"https://github.com/{repo}/issues/{num}")
 
-                is_stale = False
-                updated_dt = parse_iso_datetime(updated_at_str)
-                if updated_dt:
-                    age_hours = (now - updated_dt).total_seconds() / 3600.0
-                    if age_hours > 48.0 and comments_count == 0:
-                        is_stale = True
+            is_blocked = (
+                "blocked" in labels or
+                "[blocked]" in title.lower() or
+                "blocked:" in title.lower() or
+                "blocked by" in body.lower()
+            )
 
-                issue_entry = {
-                    "repo": repo,
-                    "number": num,
-                    "title": title,
-                    "url": html_url,
-                    "is_blocked": is_blocked,
-                    "is_stale": is_stale,
-                    "comments": comments_count,
-                    "created_at": created_at_str,
-                    "updated_at": updated_at_str,
-                    "labels": labels
-                }
+            is_stale = False
+            updated_dt = parse_iso_datetime(updated_at_str)
+            if updated_dt:
+                age_hours = (now - updated_dt).total_seconds() / 3600.0
+                if age_hours > 48.0 and comments_count == 0:
+                    is_stale = True
 
-                acc_result["open_issues"].append(issue_entry)
-                if is_blocked:
-                    acc_result["blocked_issues"].append(issue_entry)
-                if is_stale:
-                    acc_result["stale_issues"].append(issue_entry)
+            issue_entry = {
+                "number": num,
+                "title": title,
+                "url": html_url,
+                "is_blocked": is_blocked,
+                "is_stale": is_stale,
+                "comments": comments_count,
+                "created_at": iss.get("created_at", ""),
+                "updated_at": updated_at_str,
+                "labels": labels
+            }
 
-        # 3. Actions / Workflow Runs
-        runs_data, err = fetch_github_api(f"/repos/{repo}/actions/runs?per_page=10", token=token)
-        if err:
-            acc_result["errors"].append(f"{repo} actions: {err}")
-        elif isinstance(runs_data, dict) and "workflow_runs" in runs_data:
-            for r in runs_data.get("workflow_runs", []):
-                run_id = r.get("id")
-                name = r.get("name", "Workflow")
-                status = r.get("status", "unknown")
-                conclusion = r.get("conclusion") or status
-                event = r.get("event", "")
-                created_at_str = r.get("created_at", "")
-                html_url = r.get("html_url", f"https://github.com/{repo}/actions/runs/{run_id}")
+            result["open_issues"].append(issue_entry)
+            if is_blocked:
+                result["blocked_issues"].append(issue_entry)
+            if is_stale:
+                result["stale_issues"].append(issue_entry)
 
-                run_entry = {
-                    "repo": repo,
-                    "id": run_id,
-                    "name": name,
-                    "status": status,
-                    "conclusion": conclusion,
-                    "event": event,
-                    "created_at": created_at_str,
-                    "url": html_url
-                }
+    # Recent Actions runs
+    runs_data, err = fetch_github_api(f"/repos/{repo}/actions/runs?per_page=10", token=token)
+    if err:
+        result["errors"].append(f"actions: {err}")
+    elif isinstance(runs_data, dict) and "workflow_runs" in runs_data:
+        for r in runs_data.get("workflow_runs", []):
+            run_id = r.get("id")
+            conclusion = r.get("conclusion") or r.get("status", "unknown")
+            created_at_str = r.get("created_at", "")
+            run_entry = {
+                "id": run_id,
+                "name": r.get("name", "Workflow"),
+                "status": r.get("status", "unknown"),
+                "conclusion": conclusion,
+                "event": r.get("event", ""),
+                "created_at": created_at_str,
+                "url": r.get("html_url", f"https://github.com/{repo}/actions/runs/{run_id}")
+            }
+            result["recent_runs"].append(run_entry)
 
-                acc_result["agy_tasks"].append(run_entry)
+            if conclusion in ("failure", "timed_out", "startup_failure"):
+                created_dt = parse_iso_datetime(created_at_str)
+                age_h = (now - created_dt).total_seconds() / 3600.0 if created_dt else 0.0
+                if not created_dt or age_h <= 48.0:
+                    result["failed_runs"].append(run_entry)
 
-                if conclusion in ("failure", "timed_out", "startup_failure"):
-                    created_dt = parse_iso_datetime(created_at_str)
-                    if created_dt:
-                        age_h = (now - created_dt).total_seconds() / 3600.0
-                        if age_h <= 48.0:
-                            acc_result["failed_runs"].append(run_entry)
-                    else:
-                        acc_result["failed_runs"].append(run_entry)
-
-    if acc_result["failed_runs"] or acc_result["blocked_issues"]:
-        acc_result["status"] = "red"
-    elif acc_result["stale_issues"]:
-        acc_result["status"] = "amber"
+    if result["failed_runs"] or result["blocked_issues"] or result["gates"].get("fail", 0) > 0:
+        result["status"] = "red"
+    elif result["stale_issues"]:
+        result["status"] = "amber"
     else:
-        acc_result["status"] = "green"
+        result["status"] = "green"
 
-    return acc_result
-
-
-def probe_control_room_gates(acc6_token):
-    """Attempt to probe gate health of Control-Room via ACC6_PAT."""
-    if not acc6_token:
-        return {"status": "unmeasured", "note": "ACC6_PAT not available"}
-
-    url = "/repos/mohammadlali0707-stack/Control-Room/contents/Reports/gates"
-    data, err = fetch_github_api(url, token=acc6_token)
-    if err or not isinstance(data, list):
-        return {"status": "unmeasured", "note": f"Control-Room gate directory query: {err or 'no contents'}"}
-
-    gate_files = [f for f in data if f.get("name", "").startswith("gates-") and f.get("name", "").endswith(".txt")]
-    if not gate_files:
-        return {"status": "unmeasured", "note": "No gates-*.txt in Control-Room/Reports/gates"}
-
-    latest_file = sorted(gate_files, key=lambda x: x.get("name", ""), reverse=True)[0]
-    return {
-        "status": "connected",
-        "latest_file": latest_file.get("name"),
-        "url": latest_file.get("html_url")
-    }
+    return result
 
 
-def build_status_feed(env_tokens=None, reports_dir=None, subdomain="status.airboxvip.top"):
+def build_status_feed(env_tokens=None, subdomain="status.airboxvip.top"):
     """Build the complete status feed document."""
     tokens = env_tokens or os.environ
     now_utc = datetime.datetime.now(datetime.timezone.utc)
     now_iso = now_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    # 1. Local Gate Health
-    ccp_gates = collect_latest_gate_report(reports_dir=reports_dir)
+    projects_feed = [collect_project_status(p, env_tokens=tokens, now_utc=now_utc) for p in PROJECTS]
 
-    # 2. Control Room Gate Health
-    cr_token = tokens.get("ACC6_PAT", "").strip()
-    cr_gates = probe_control_room_gates(cr_token)
-
-    # 3. 9-Account Status Gathering
-    accounts_feed = []
     all_stuck_items = []
-    all_recent_tasks = []
+    all_recent_runs = []
 
-    for acc in ACCOUNTS:
-        data = collect_account_data(acc, env_tokens=tokens, now_utc=now_utc)
-        accounts_feed.append(data)
+    for proj in projects_feed:
+        name = proj["name"]
+        repo = proj["repo"]
 
-        for fr in data.get("failed_runs", []):
+        for fr in proj.get("failed_runs", []):
             all_stuck_items.append({
                 "type": "failed_run",
                 "severity": "red",
-                "account": data["owner"],
-                "repo": fr["repo"],
-                "title": f"Workflow run failed: {fr['name']} (ID {fr['id']})",
-                "detail": f"Conclusion: {fr['conclusion']}",
+                "account": name,
+                "repo": repo,
+                "title": f"اجرای ناموفق: {fr['name']} (#{fr['id']})",
+                "detail": f"نتیجه: {fr['conclusion']}",
                 "url": fr["url"],
                 "timestamp": fr["created_at"]
             })
 
-        for bi in data.get("blocked_issues", []):
+        for bi in proj.get("blocked_issues", []):
             all_stuck_items.append({
                 "type": "blocked_issue",
                 "severity": "red",
-                "account": data["owner"],
-                "repo": bi["repo"],
-                "title": f"Blocked issue #{bi['number']}: {bi['title']}",
-                "detail": f"Labels: {', '.join(bi['labels'])}",
+                "account": name,
+                "repo": repo,
+                "title": f"ایشوی مسدود #{bi['number']}: {bi['title']}",
+                "detail": f"برچسب‌ها: {', '.join(bi['labels'])}",
                 "url": bi["url"],
                 "timestamp": bi["updated_at"]
             })
 
-        for si in data.get("stale_issues", []):
+        for si in proj.get("stale_issues", []):
             all_stuck_items.append({
                 "type": "stale_issue",
                 "severity": "amber",
-                "account": data["owner"],
-                "repo": si["repo"],
-                "title": f"Stale issue #{si['number']}: {si['title']}",
-                "detail": "No activity or replies in > 48 hours",
+                "account": name,
+                "repo": repo,
+                "title": f"ایشوی بدون‌پاسخ #{si['number']}: {si['title']}",
+                "detail": "بدون فعالیت یا پاسخ در بیش از ۴۸ ساعت",
                 "url": si["url"],
                 "timestamp": si["updated_at"]
             })
 
-        all_recent_tasks.extend(data.get("agy_tasks", []))
-
-    if ccp_gates.get("status") == "fail" or ccp_gates.get("fail", 0) > 0:
-        for fg in ccp_gates.get("failing_gates", []):
+        g = proj.get("gates", {})
+        if g.get("fail", 0) > 0:
             all_stuck_items.append({
                 "type": "gate_failure",
                 "severity": "red",
-                "account": "Mohammadlali",
-                "repo": "Mohammadlali/Claud-Cloud-Project",
-                "title": f"Failing gate: {fg}",
-                "detail": f"Gate suite report: {ccp_gates.get('source')}",
-                "url": f"https://github.com/Mohammadlali/Claud-Cloud-Project/blob/claude/gateway-auth-fix-nr7k0b/Reports/gates/{ccp_gates.get('source')}",
+                "account": name,
+                "repo": repo,
+                "title": f"{g.get('fail')} گیت ناموفق در {name}",
+                "detail": f"گزارش: {g.get('source', '-')}",
+                "url": g.get("url") or f"https://github.com/{repo}",
                 "timestamp": now_iso
             })
+
+        all_recent_runs.extend(
+            {**r, "project": name, "repo": repo} for r in proj.get("recent_runs", [])
+        )
 
     severity_order = {"red": 0, "amber": 1, "yellow": 2}
     all_stuck_items.sort(key=lambda x: (severity_order.get(x["severity"], 9), x.get("timestamp", "")), reverse=False)
 
-    all_recent_tasks.sort(key=lambda x: x.get("created_at", ""), reverse=True)
-    all_recent_tasks = all_recent_tasks[:20]
+    all_recent_runs.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+    all_recent_runs = all_recent_runs[:20]
 
     red_count = len([item for item in all_stuck_items if item["severity"] == "red"])
     amber_count = len([item for item in all_stuck_items if item["severity"] == "amber"])
@@ -568,7 +448,7 @@ def build_status_feed(env_tokens=None, reports_dir=None, subdomain="status.airbo
 
     feed = {
         "metadata": {
-            "version": 1,
+            "version": 2,
             "generated_at": now_iso,
             "domain": "airboxvip.top",
             "subdomain": subdomain,
@@ -580,17 +460,13 @@ def build_status_feed(env_tokens=None, reports_dir=None, subdomain="status.airbo
             "headline": headline,
             "red_count": red_count,
             "amber_count": amber_count,
-            "total_accounts": 9,
-            "active_accounts": len([a for a in accounts_feed if a["token_available"]]),
+            "total_projects": len(projects_feed),
+            "active_projects": len([p for p in projects_feed if p["token_available"]]),
             "stuck_items_count": len(all_stuck_items)
         },
-        "gates": {
-            "claud_cloud_project": ccp_gates,
-            "control_room": cr_gates
-        },
+        "projects": projects_feed,
         "stuck_items": all_stuck_items,
-        "recent_agy_tasks": all_recent_tasks,
-        "accounts": accounts_feed
+        "recent_runs": all_recent_runs
     }
 
     # Attach push notification config for PWA frontend
@@ -660,13 +536,11 @@ def archive_to_r2_if_configured(feed_data):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Collect 9-account status feed")
+    parser = argparse.ArgumentParser(description="Collect per-project status feed")
     parser.add_argument("--out", default=os.path.join(ROOT, "StatusFeed", "status.json"),
                         help="Target output JSON path")
     parser.add_argument("--subdomain", default="status.airboxvip.top",
                         help="Target subdomain on airboxvip.top")
-    parser.add_argument("--gates-dir", default=os.path.join(ROOT, "Reports", "gates"),
-                        help="Path to gates report directory")
     parser.add_argument("--test-push", action="store_true",
                         help="Send test push notification even if no new red items")
     args = parser.parse_args()
@@ -680,7 +554,7 @@ def main():
         except Exception:
             prev_feed = None
 
-    feed = build_status_feed(reports_dir=args.gates_dir, subdomain=args.subdomain)
+    feed = build_status_feed(subdomain=args.subdomain)
 
     out_dir = os.path.dirname(os.path.abspath(args.out))
     if not os.path.isdir(out_dir):
@@ -691,7 +565,9 @@ def main():
 
     print(f"Wrote status feed to: {args.out}")
     print(f"Status: {feed['overview']['system_status'].upper()} - {feed['overview']['headline']}")
-    print(f"Gates: {feed['gates']['claud_cloud_project']['pass']}/{feed['gates']['claud_cloud_project']['total']} pass")
+    for proj in feed["projects"]:
+        g = proj["gates"]
+        print(f"Project {proj['name']}: gates {g.get('pass', 0)}/{g.get('total', 0)} ({g.get('status', 'unmeasured')}), overall {proj['status']}")
 
     # Detect new red items and deliver Web Push notification
     new_red = detect_new_red_items(prev_feed, feed)
@@ -722,9 +598,9 @@ def main():
         "red_count": feed["overview"]["red_count"],
         "amber_count": feed["overview"]["amber_count"],
         "new_red_count": len(new_red),
-        "accounts_total": feed["overview"]["total_accounts"],
-        "accounts_active": feed["overview"]["active_accounts"],
-        "gates_status": feed["gates"]["claud_cloud_project"]["status"],
+        "projects_total": feed["overview"]["total_projects"],
+        "projects_active": feed["overview"]["active_projects"],
+        "projects_status": {p["key"]: p["status"] for p in feed["projects"]},
         "subdomain": args.subdomain
     })
 

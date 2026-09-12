@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>وضعیت عملیات // Claud-Cloud-Project</title>
+  <title>وضعیت عملیات // فلیت</title>
   <meta name="theme-color" content="#0b0f17">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
@@ -22,7 +22,7 @@
     <div class="topbar-inner">
       <div class="brand">
         <span class="indicator" id="global-indicator"></span>
-        <h1 class="brand-title">فید وضعیت عملیات <span class="brand-sub">// CLAUD-CLOUD-PROJECT</span></h1>
+        <h1 class="brand-title">فید وضعیت عملیات <span class="brand-sub">// همه‌ی پروژه‌های فلیت</span></h1>
       </div>
       <div class="meta-controls">
         <div class="meta-item">
@@ -42,12 +42,27 @@
         <button id="btn-refresh" class="btn-sm" title="تازه‌سازی فید">تازه‌سازی</button>
       </div>
     </div>
-    <nav class="tabnav" id="tabnav" aria-label="پرش به بخش">
-      <a href="#stuck-section" class="tab-link">⚠️ نیازمند توجه</a>
-      <a href="#gates-section" class="tab-link">🛡️ گیت‌ها</a>
-      <a href="#tasks-section" class="tab-link">🤖 تسک‌ها</a>
-      <a href="#fleet-section" class="tab-link">🏢 اکانت‌ها</a>
-    </nav>
+    <div class="menu-wrap">
+      <button id="btn-menu-toggle" class="btn-menu-toggle" type="button" aria-expanded="false" aria-controls="menu-panel">
+        <span class="menu-icon">☰</span> منو
+      </button>
+      <div id="menu-panel" class="menu-panel" role="menu" hidden>
+        <div class="menu-section">
+          <h4 class="menu-section-title">بخش‌های صفحه</h4>
+          <ul class="menu-list">
+            <li><a href="#stuck-section" class="menu-link" role="menuitem">⚠️ نیازمند توجه</a></li>
+            <li><a href="#projects-section" class="menu-link" role="menuitem">📦 پروژه‌ها</a></li>
+            <li><a href="#tasks-section" class="menu-link" role="menuitem">🤖 اجراهای اخیر</a></li>
+          </ul>
+        </div>
+        <div class="menu-section">
+          <h4 class="menu-section-title">پروژه‌ها</h4>
+          <ul class="menu-list" id="menu-projects-list">
+            <!-- one <li><a> per project, injected by app.js -->
+          </ul>
+        </div>
+      </div>
+    </div>
   </header>
 
   <main class="container">
@@ -70,8 +85,8 @@
           <span class="chip-label">هشدارهای قرمز</span>
         </div>
         <div class="metric-chip">
-          <span class="chip-num" id="chip-accounts">9</span>
-          <span class="chip-label">اکانت‌ها</span>
+          <span class="chip-num" id="chip-projects" dir="ltr">--/--</span>
+          <span class="chip-label">پروژه‌های آنلاین</span>
         </div>
       </div>
     </section>
@@ -96,75 +111,24 @@
       </div>
     </section>
 
-    <!-- Gate Health Overview -->
-    <section class="section" id="gates-section">
+    <!-- Per-Project Status -->
+    <section class="section" id="projects-section">
       <div class="section-header">
         <h3 class="section-title">
-          <span class="section-icon">🛡️</span> وضعیت مجموعه گیت‌ها
+          <span class="section-icon">📦</span> وضعیت هر پروژه، جداگانه
         </h3>
-        <span class="badge badge-green" id="gate-overall-badge">موفق</span>
+        <span class="text-sm text-muted" id="projects-count-label">-- پروژه</span>
       </div>
-      <div class="gates-grid">
-        <div class="card gate-card" id="gate-ccp-card">
-          <div class="card-header">
-            <h4 dir="ltr">Mohammadlali/Claud-Cloud-Project</h4>
-            <span class="status-pill status-pill-green" id="ccp-gate-pill">موفق</span>
-          </div>
-          <div class="card-body">
-            <div class="gate-numbers">
-              <div class="gate-stat">
-                <span class="stat-big" id="gate-pass-val" dir="ltr">--</span>
-                <span class="stat-sub">موفق</span>
-              </div>
-              <div class="gate-stat">
-                <span class="stat-big stat-fail" id="gate-fail-val" dir="ltr">0</span>
-                <span class="stat-sub">ناموفق</span>
-              </div>
-              <div class="gate-stat">
-                <span class="stat-big" id="gate-total-val" dir="ltr">--</span>
-                <span class="stat-sub">مجموع</span>
-              </div>
-            </div>
-            <div class="progress-bar-wrap">
-              <div class="progress-bar-fill" id="gate-progress-fill" style="width: 100%;"></div>
-            </div>
-            <div class="gate-detail-row">
-              <span class="gate-detail-label">آخرین گزارش:</span>
-              <code class="code-sm" id="gate-report-source" dir="ltr">--</code>
-            </div>
-            <div class="gate-detail-row" id="gate-commit-row">
-              <span class="gate-detail-label">کامیت مرجع:</span>
-              <code class="code-sm" id="gate-commit-sha" dir="ltr">--</code>
-            </div>
-            <div id="ccp-failing-gates" class="failing-gates-list" style="display: none;"></div>
-          </div>
-        </div>
-
-        <div class="card gate-card" id="gate-cr-card">
-          <div class="card-header">
-            <h4 dir="ltr">mohammadlali0707-stack/Control-Room</h4>
-            <span class="status-pill status-pill-neutral" id="cr-gate-pill">درحال بررسی</span>
-          </div>
-          <div class="card-body">
-            <p class="text-muted" id="cr-gate-desc">در حال بررسی وضعیت Control-Room از طریق ACC6_PAT...</p>
-            <div class="gate-detail-row">
-              <span class="gate-detail-label">وضعیت:</span>
-              <span id="cr-gate-status-text">در حال اتصال</span>
-            </div>
-            <div class="gate-detail-row">
-              <span class="gate-detail-label">آخرین گزارش:</span>
-              <code class="code-sm" id="cr-gate-artifact" dir="ltr">--</code>
-            </div>
-          </div>
-        </div>
+      <div class="projects-grid" id="projects-grid">
+        <!-- One card per project, injected by app.js -->
       </div>
     </section>
 
-    <!-- Recent @agy Task Outcomes -->
+    <!-- Recent Actions Runs Across All Projects -->
     <section class="section" id="tasks-section">
       <div class="section-header">
         <h3 class="section-title">
-          <span class="section-icon">🤖</span> آخرین نتایج تسک‌های @agy (۲۰ مورد اخیر)
+          <span class="section-icon">🤖</span> آخرین اجراها در همه‌ی پروژه‌ها (۲۰ مورد اخیر)
         </h3>
         <span class="text-sm text-muted">نتایج برگرفته از اجراهای GitHub Actions</span>
       </div>
@@ -174,7 +138,7 @@
             <thead>
               <tr>
                 <th>وضعیت</th>
-                <th>مخزن</th>
+                <th>پروژه</th>
                 <th>گردش‌کار</th>
                 <th>شناسه اجرا</th>
                 <th>رویداد</th>
@@ -190,24 +154,11 @@
         </div>
       </div>
     </section>
-
-    <!-- 9-Account Fleet Status Grid -->
-    <section class="section" id="fleet-section">
-      <div class="section-header">
-        <h3 class="section-title">
-          <span class="section-icon">🏢</span> وضعیت ۹ اکانت
-        </h3>
-        <span class="text-sm text-muted">ماتریس عملیاتی ACC0 تا ACC8</span>
-      </div>
-      <div class="fleet-grid" id="fleet-grid">
-        <!-- Account cards injected via app.js -->
-      </div>
-    </section>
   </main>
 
   <footer class="footer">
     <div class="footer-inner">
-      <p>داشبورد داخلی عملیات Claud-Cloud-Project // مکانیزم اطلاع‌رسانی فاز ۱</p>
+      <p>داشبورد داخلی عملیات همه‌ی پروژه‌های فلیت // مکانیزم اطلاع‌رسانی فاز ۱</p>
       <p class="footer-sub">پایش سبزِ ساکت اعمال می‌شود. همه‌ی معیارهای زنده از GitHub Actions و بررسی PAT گرفته می‌شوند. <a href="status.json" target="_blank" class="footer-link" dir="ltr">Raw JSON Feed</a></p>
     </div>
   </footer>

@@ -202,37 +202,100 @@ body {
   background-color: rgba(16, 185, 129, 0.3);
 }
 
-/* Section jump nav -- lives inside .topbar so it scrolls with it as one
-   sticky block; no separate sticky-offset math to keep in sync. */
-.tabnav {
+/* Top dropdown menu -- replaces the old horizontally-scrolling tab strip.
+   Lives inside .topbar so it scrolls with it as one sticky block; no
+   separate sticky-offset math to keep in sync. */
+.menu-wrap {
   max-width: 1400px;
   margin: 0.75rem auto 0;
-  display: flex;
-  gap: 0.5rem;
-  overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
-  scrollbar-width: thin;
-  padding-bottom: 0.15rem;
+  position: relative;
 }
 
-.tab-link {
-  flex: 0 0 auto;
-  color: var(--text-muted);
+.btn-menu-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
   background-color: var(--bg-accent);
+  color: var(--text-main);
   border: 1px solid var(--border-light);
-  border-radius: 999px;
-  padding: 0.35rem 0.9rem;
-  font-size: 0.8rem;
-  font-weight: 500;
-  text-decoration: none;
-  white-space: nowrap;
+  border-radius: 6px;
+  padding: 0.45rem 0.9rem;
+  font-size: 0.85rem;
+  font-family: var(--font-sans);
+  font-weight: 600;
+  cursor: pointer;
   transition: all 0.15s ease;
 }
 
-.tab-link:hover,
-.tab-link:focus-visible {
+.btn-menu-toggle:hover,
+.btn-menu-toggle[aria-expanded="true"] {
+  background-color: var(--border-light);
+}
+
+.menu-icon {
+  font-size: 1rem;
+  line-height: 1;
+}
+
+/* display is set only on :not([hidden]) -- an unconditional `display: flex`
+   here would out-cascade the browser's own `[hidden] { display: none }`
+   UA rule (author styles always beat UA styles, regardless of specificity),
+   silently showing the panel open on every page load. Found by an actual
+   screenshot, not assumed from reading the JS toggle logic. */
+.menu-panel {
+  position: absolute;
+  inset-inline-start: 0;
+  top: calc(100% + 0.5rem);
+  z-index: 60;
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-light);
+  border-radius: 10px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+  padding: 0.75rem;
+  flex-wrap: wrap;
+  gap: 1.5rem;
+  min-width: 300px;
+  max-width: calc(100vw - 2rem);
+}
+
+.menu-panel:not([hidden]) {
+  display: flex;
+}
+
+.menu-section {
+  min-width: 180px;
+  flex: 1 1 180px;
+}
+
+.menu-section-title {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-sub);
+  padding: 0.3rem 0.6rem;
+  margin-bottom: 0.2rem;
+}
+
+.menu-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+}
+
+.menu-link {
+  display: block;
+  color: var(--text-muted);
+  text-decoration: none;
+  font-size: 0.88rem;
+  padding: 0.5rem 0.6rem;
+  border-radius: 6px;
+  transition: all 0.12s ease;
+}
+
+.menu-link:hover,
+.menu-link:focus-visible {
   color: var(--text-main);
-  border-color: var(--text-muted);
+  background-color: var(--bg-accent);
 }
 
 /* Main Container */
@@ -513,8 +576,8 @@ body {
   color: var(--text-main);
 }
 
-/* Gates Grid */
-.gates-grid {
+/* Project Cards Grid */
+.projects-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
   gap: 1.25rem;
@@ -702,127 +765,10 @@ body {
   border: 1px solid var(--blue-border);
 }
 
-/* 9-Account Fleet Grid */
-.fleet-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
-  gap: 1.25rem;
-}
-
-.account-card {
-  background-color: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  overflow: hidden;
-  transition: border-color 0.2s, transform 0.1s;
-}
-
-.account-card:hover {
-  border-color: var(--border-light);
-}
-
-.account-card.acc-red {
-  border-color: var(--red-border);
-}
-
-.acc-header {
-  padding: 0.85rem 1.25rem;
-  background-color: rgba(255, 255, 255, 0.02);
-  border-bottom: 1px solid var(--border);
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.acc-title-wrap {
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
-}
-
-.acc-badge {
-  background-color: var(--bg-accent);
-  color: var(--text-main);
-  font-family: var(--font-mono);
-  font-size: 0.75rem;
-  padding: 0.15rem 0.45rem;
-  border-radius: 4px;
-  font-weight: 600;
-}
-
-.acc-owner {
-  font-size: 0.95rem;
-  font-weight: 600;
-}
-
-.acc-role {
-  font-size: 0.75rem;
-  color: var(--text-muted);
-}
-
-.acc-body {
-  padding: 1rem 1.25rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.85rem;
-}
-
-.acc-section-title {
-  font-size: 0.75rem;
-  text-transform: uppercase;
-  color: var(--text-sub);
-  letter-spacing: 0.5px;
-  margin-bottom: 0.35rem;
-}
-
-.acc-commits-list, .acc-issues-list {
-  list-style: none;
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-}
-
-.acc-commit-item, .acc-issue-item {
-  font-size: 0.8rem;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.acc-commit-msg, .acc-issue-title {
-  color: var(--text-muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  flex: 1;
-}
-
-.acc-commit-msg:hover, .acc-issue-title:hover {
-  color: var(--text-main);
-}
-
 .acc-meta-tag {
   font-size: 0.7rem;
   font-family: var(--font-mono);
   color: var(--text-sub);
-}
-
-.issue-blocked-tag {
-  background-color: var(--red-bg);
-  color: var(--red);
-  font-size: 0.65rem;
-  padding: 0.1rem 0.3rem;
-  border-radius: 3px;
-  font-weight: bold;
-}
-
-.issue-stale-tag {
-  background-color: var(--amber-bg);
-  color: var(--amber);
-  font-size: 0.65rem;
-  padding: 0.1rem 0.3rem;
-  border-radius: 3px;
 }
 
 /* Footer */
@@ -842,7 +788,7 @@ body {
   margin-top: 0.35rem;
 }
 
-/* Mobile. The real bug this section fixes: .gates-grid/.fleet-grid used
+/* Mobile. The real bug this section fixes: .projects-grid used
    grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)) -- on a
    ~360-390px phone viewport, .container's own 1.5rem side padding
    already leaves less than 360px of content width, so the grid item
@@ -863,8 +809,13 @@ body {
     flex-wrap: wrap;
   }
 
-  .tabnav {
+  .menu-wrap {
     margin-top: 0.6rem;
+  }
+
+  .menu-panel {
+    min-width: 0;
+    width: 100%;
   }
 
   .container {
@@ -891,8 +842,7 @@ body {
     padding: 0.5rem 0.4rem;
   }
 
-  .gates-grid,
-  .fleet-grid {
+  .projects-grid {
     grid-template-columns: 1fr;
   }
 }

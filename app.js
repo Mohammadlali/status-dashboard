@@ -102,12 +102,9 @@
     latestFeedData = data;
     const meta = data.metadata || {};
     const overview = data.overview || {};
-    const gates = data.gates || {};
-    const ccpGates = gates.claud_cloud_project || {};
-    const crGates = gates.control_room || {};
+    const projects = data.projects || [];
     const stuckItems = data.stuck_items || [];
-    const tasks = data.recent_agy_tasks || [];
-    const accounts = data.accounts || [];
+    const runs = data.recent_runs || [];
 
     // 1. Meta Controls
     document.getElementById('meta-domain').textContent = meta.subdomain || 'status.airboxvip.top';
@@ -127,13 +124,21 @@
     badge.textContent = statusLabels[overview.system_status] || 'نرمال';
 
     document.getElementById('banner-headline').textContent = overview.headline || 'همه‌چیز نرمال است';
-    document.getElementById('chip-gates').textContent = `${ccpGates.pass || 0}/${ccpGates.total || 0}`;
+
+    // Gate chip aggregates pass/total across every project with a measured
+    // gate suite -- a project with no Reports/gates (e.g. this dashboard
+    // itself) contributes 0/0 and is skipped rather than dragging the sum down.
+    const measuredProjects = projects.filter(p => (p.gates || {}).total > 0);
+    const gatesPassSum = measuredProjects.reduce((s, p) => s + (p.gates.pass || 0), 0);
+    const gatesTotalSum = measuredProjects.reduce((s, p) => s + (p.gates.total || 0), 0);
+    document.getElementById('chip-gates').textContent = `${gatesPassSum}/${gatesTotalSum}`;
 
     const chipRed = document.getElementById('chip-red');
     chipRed.textContent = toPersianDigits(overview.red_count || 0);
     chipRed.className = (overview.red_count > 0) ? 'chip-num chip-alert-red' : 'chip-num chip-alert-zero';
 
-    document.getElementById('chip-accounts').textContent = `${overview.active_accounts || 0}/${overview.total_accounts || 9}`;
+    const onlineProjects = projects.filter(p => p.status !== 'offline_unconfigured').length;
+    document.getElementById('chip-projects').textContent = `${onlineProjects}/${overview.total_projects || projects.length}`;
 
     // 3. Stuck & Red Attention Center -- split into recent (<=24h) and
     // older, shown behind a toggle so old, already-seen items don't
@@ -170,61 +175,21 @@
       olderList.style.display = 'none';
     }
 
-    // 4. Gate Health Cards
-    document.getElementById('gate-pass-val').textContent = ccpGates.pass || '--';
-    document.getElementById('gate-fail-val').textContent = ccpGates.fail || '0';
-    document.getElementById('gate-total-val').textContent = ccpGates.total || '--';
-    document.getElementById('gate-report-source').textContent = ccpGates.source || '--';
-    document.getElementById('gate-commit-sha').textContent = ccpGates.commit ? ccpGates.commit.substring(0, 7) : 'HEAD';
+    // 4. Per-Project Cards
+    renderProjects(projects);
+    buildProjectsMenu(projects);
 
-    const ccpPill = document.getElementById('ccp-gate-pill');
-    const ccpOverall = document.getElementById('gate-overall-badge');
-    const fill = document.getElementById('gate-progress-fill');
-    if ((ccpGates.fail || 0) > 0 || ccpGates.status === 'fail') {
-      ccpPill.className = 'status-pill status-pill-red';
-      ccpPill.textContent = 'ناموفق';
-      ccpOverall.className = 'badge badge-red';
-      ccpOverall.textContent = 'ناموفق';
-      fill.className = 'progress-bar-fill has-fail';
-      const pct = Math.round((ccpGates.pass / (ccpGates.total || 1)) * 100);
-      fill.style.width = `${pct}%`;
-    } else {
-      ccpPill.className = 'status-pill status-pill-green';
-      ccpPill.textContent = 'موفق';
-      ccpOverall.className = 'badge badge-green';
-      ccpOverall.textContent = 'موفق';
-      fill.className = 'progress-bar-fill';
-      fill.style.width = '100%';
-    }
+    document.getElementById('projects-count-label').textContent =
+      `${toPersianDigits(projects.length)} پروژه`;
 
-    // Control Room gate card
-    const crPill = document.getElementById('cr-gate-pill');
-    const crStatusText = document.getElementById('cr-gate-status-text');
-    const crArtifact = document.getElementById('cr-gate-artifact');
-    const crDesc = document.getElementById('cr-gate-desc');
-
-    if (crGates.status === 'connected') {
-      crPill.className = 'status-pill status-pill-green';
-      crPill.textContent = 'متصل';
-      crStatusText.textContent = 'در دسترس از طریق ACC6_PAT';
-      crArtifact.textContent = crGates.latest_file || '--';
-      crDesc.textContent = 'تاریخچه‌ی گیت‌های Control-Room با موفقیت بررسی شد.';
-    } else {
-      crPill.className = 'status-pill status-pill-neutral';
-      crPill.textContent = 'اندازه‌گیری‌نشده';
-      crStatusText.textContent = crGates.status || 'آفلاین / وصل‌نشده';
-      crArtifact.textContent = '--';
-      crDesc.textContent = crGates.note || 'نیازمند secret به نام ACC6_PAT در گردش‌کار دیپلوی است.';
-    }
-
-    // 5. Recent @agy Task Outcomes
+    // 5. Recent Actions Runs Across All Projects
     const tbody = document.getElementById('tasks-tbody');
-    if (tasks.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted">هیچ تسک اخیری ثبت نشده.</td></tr>';
+    if (runs.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted">هیچ اجرای اخیری ثبت نشده.</td></tr>';
     } else {
       const conclusionLabels = { success: 'موفق', failure: 'ناموفق', timed_out: 'اتمام‌مهلت', in_progress: 'در حال اجرا', unknown: 'نامشخص' };
-      tbody.innerHTML = tasks.slice(0, 15).map(t => {
-        const conc = (t.conclusion || t.status || 'unknown').toLowerCase();
+      tbody.innerHTML = runs.slice(0, 20).map(r => {
+        const conc = (r.conclusion || r.status || 'unknown').toLowerCase();
         let badgeClass = 'task-conclusion-badge';
         if (conc === 'success') badgeClass += ' success';
         else if (conc === 'failure' || conc === 'timed_out') badgeClass += ' failure';
@@ -233,70 +198,95 @@
         return `
           <tr>
             <td><span class="${badgeClass}">${escapeHtml(conclusionLabels[conc] || conc)}</span></td>
-            <td><code dir="ltr">${escapeHtml(t.repo)}</code></td>
-            <td>${escapeHtml(t.name)}</td>
-            <td><a href="${escapeHtml(t.url)}" target="_blank" rel="noopener" class="footer-link" dir="ltr">#${escapeHtml(t.id)}</a></td>
-            <td><span class="acc-meta-tag" dir="ltr">${escapeHtml(t.event || 'push')}</span></td>
-            <td><span class="acc-meta-tag">${timeAgo(t.created_at)}</span></td>
+            <td>${escapeHtml(r.project)}</td>
+            <td>${escapeHtml(r.name)}</td>
+            <td><a href="${escapeHtml(r.url)}" target="_blank" rel="noopener" class="footer-link" dir="ltr">#${escapeHtml(r.id)}</a></td>
+            <td><span class="acc-meta-tag" dir="ltr">${escapeHtml(r.event || 'push')}</span></td>
+            <td><span class="acc-meta-tag">${timeAgo(r.created_at)}</span></td>
           </tr>
         `;
       }).join('');
     }
+  }
 
-    // 6. 9-Account Fleet Grid
-    const fleetGrid = document.getElementById('fleet-grid');
-    fleetGrid.innerHTML = accounts.map(acc => {
-      const isRed = (acc.failed_runs && acc.failed_runs.length > 0) || (acc.blocked_issues && acc.blocked_issues.length > 0);
-      const isOffline = !acc.token_available;
-      const statusPillClass = isRed ? 'status-pill-red' : (isOffline ? 'status-pill-neutral' : 'status-pill-green');
-      const statusText = isRed ? 'نیازمند توجه' : (isOffline ? 'آفلاین' : 'آنلاین');
+  function renderProjects(projects) {
+    const grid = document.getElementById('projects-grid');
+    const statusLabels = { green: 'سالم', amber: 'هشدار', red: 'نیازمند توجه', offline_unconfigured: 'آفلاین' };
+    const pillClass = { green: 'status-pill-green', amber: 'status-pill-red', red: 'status-pill-red', offline_unconfigured: 'status-pill-neutral' };
 
-      const commitsHtml = (acc.commits && acc.commits.length > 0)
-        ? acc.commits.slice(0, 3).map(c => `
-            <li class="acc-commit-item">
-              <a href="${escapeHtml(c.html_url)}" target="_blank" rel="noopener" class="code-sm" dir="ltr">${escapeHtml(c.sha)}</a>
-              <span class="acc-commit-msg" title="${escapeHtml(c.message)}">${escapeHtml(c.message)}</span>
-              <span class="acc-meta-tag">${timeAgo(c.date)}</span>
-            </li>`).join('')
-        : '<li class="text-muted text-sm">بدون فعالیت اخیر در کامیت‌ها</li>';
+    grid.innerHTML = projects.map(proj => {
+      const g = proj.gates || {};
+      const hasGates = (g.total || 0) > 0;
+      const gateFail = (g.fail || 0) > 0 || g.status === 'fail';
 
-      const issuesHtml = (acc.open_issues && acc.open_issues.length > 0)
-        ? acc.open_issues.slice(0, 3).map(iss => `
-            <li class="acc-issue-item">
-              <span class="acc-issue-title">
-                <a href="${escapeHtml(iss.url)}" target="_blank" rel="noopener" class="footer-link" dir="ltr">#${iss.number}</a>
-                ${escapeHtml(iss.title)}
-              </span>
-              ${iss.is_blocked ? '<span class="issue-blocked-tag">مسدود</span>' : ''}
-              ${iss.is_stale ? '<span class="issue-stale-tag">بدون‌پاسخ</span>' : ''}
-            </li>`).join('')
-        : '<li class="text-muted text-sm">بدون issue باز</li>';
+      const gateBlock = hasGates ? `
+        <div class="gate-numbers">
+          <div class="gate-stat">
+            <span class="stat-big" dir="ltr">${g.pass || 0}</span>
+            <span class="stat-sub">موفق</span>
+          </div>
+          <div class="gate-stat">
+            <span class="stat-big ${gateFail ? 'stat-fail' : ''}" dir="ltr">${g.fail || 0}</span>
+            <span class="stat-sub">ناموفق</span>
+          </div>
+          <div class="gate-stat">
+            <span class="stat-big" dir="ltr">${g.total || 0}</span>
+            <span class="stat-sub">مجموع</span>
+          </div>
+        </div>
+        <div class="progress-bar-wrap">
+          <div class="progress-bar-fill ${gateFail ? 'has-fail' : ''}" style="width: ${Math.round(((g.pass || 0) / (g.total || 1)) * 100)}%;"></div>
+        </div>
+        <div class="gate-detail-row">
+          <span class="gate-detail-label">آخرین گزارش:</span>
+          <code class="code-sm" dir="ltr">${escapeHtml(g.source || '--')}</code>
+        </div>
+      ` : `
+        <p class="text-muted text-sm">${escapeHtml(g.note || 'گیتی برای این پروژه اندازه‌گیری نشده.')}</p>
+      `;
+
+      const commitBlock = proj.latest_commit ? `
+        <div class="gate-detail-row">
+          <span class="gate-detail-label">آخرین کامیت:</span>
+          <a href="${escapeHtml(proj.latest_commit.html_url)}" target="_blank" rel="noopener" class="code-sm" dir="ltr">${escapeHtml(proj.latest_commit.sha)}</a>
+        </div>
+        <p class="text-muted text-sm" title="${escapeHtml(proj.latest_commit.message)}">${escapeHtml(proj.latest_commit.message)} &bull; ${timeAgo(proj.latest_commit.date)}</p>
+      ` : '';
+
+      const openIssuesCount = (proj.open_issues || []).length;
 
       return `
-        <div class="account-card ${isRed ? 'acc-red' : ''}">
-          <div class="acc-header">
-            <div class="acc-title-wrap">
-              <span class="acc-badge" dir="ltr">ACC${acc.index}</span>
-              <div>
-                <div class="acc-owner" dir="ltr">${escapeHtml(acc.owner)}</div>
-                <div class="acc-role">${escapeHtml(acc.role)}</div>
-              </div>
+        <div class="card project-card" id="project-${proj.key}">
+          <div class="card-header">
+            <div>
+              <h4 dir="ltr">${escapeHtml(proj.name)}</h4>
+              <p class="text-muted text-sm">${escapeHtml(proj.role || '')}</p>
             </div>
-            <span class="status-pill ${statusPillClass}">${statusText}</span>
+            <span class="status-pill ${pillClass[proj.status] || 'status-pill-neutral'}">${statusLabels[proj.status] || proj.status}</span>
           </div>
-          <div class="acc-body">
-            <div>
-              <div class="acc-section-title">کامیت‌های اخیر</div>
-              <ul class="acc-commits-list">${commitsHtml}</ul>
+          <div class="card-body">
+            ${gateBlock}
+            ${commitBlock}
+            <div class="gate-detail-row">
+              <span class="gate-detail-label">مخزن:</span>
+              <code class="code-sm" dir="ltr">${escapeHtml(proj.repo)}</code>
             </div>
-            <div>
-              <div class="acc-section-title">Issue ها و تسک‌ها (${toPersianDigits((acc.open_issues || []).length)} باز)</div>
-              <ul class="acc-issues-list">${issuesHtml}</ul>
+            <div class="gate-detail-row">
+              <span class="gate-detail-label">Issue های باز:</span>
+              <span dir="ltr">${toPersianDigits(openIssuesCount)}</span>
             </div>
           </div>
         </div>
       `;
     }).join('');
+  }
+
+  function buildProjectsMenu(projects) {
+    const list = document.getElementById('menu-projects-list');
+    if (!list) return;
+    list.innerHTML = projects.map(proj => `
+      <li><a href="#project-${proj.key}" class="menu-link" role="menuitem">${escapeHtml(proj.name)}</a></li>
+    `).join('');
   }
 
   let latestFeedData = null;
@@ -490,10 +480,45 @@
     });
   }
 
+  function initMenu() {
+    const toggleBtn = document.getElementById('btn-menu-toggle');
+    const panel = document.getElementById('menu-panel');
+    if (!toggleBtn || !panel) return;
+
+    function closeMenu() {
+      panel.hidden = true;
+      toggleBtn.setAttribute('aria-expanded', 'false');
+    }
+
+    function openMenu() {
+      panel.hidden = false;
+      toggleBtn.setAttribute('aria-expanded', 'true');
+    }
+
+    toggleBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (panel.hidden) openMenu(); else closeMenu();
+    });
+
+    // Close after picking a link (mobile-friendly single tap to navigate).
+    panel.addEventListener('click', (e) => {
+      if (e.target.closest('a.menu-link')) closeMenu();
+    });
+
+    document.addEventListener('click', (e) => {
+      if (!panel.hidden && !panel.contains(e.target) && e.target !== toggleBtn) closeMenu();
+    });
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !panel.hidden) closeMenu();
+    });
+  }
+
   // Setup event listeners and interval
   document.addEventListener('DOMContentLoaded', () => {
     loadStatusFeed();
     initPwa();
+    initMenu();
 
     const btn = document.getElementById('btn-refresh');
     if (btn) btn.addEventListener('click', loadStatusFeed);
