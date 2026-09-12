@@ -79,7 +79,7 @@ jobs:
           VAPID_PUBLIC_KEY: ${{ secrets.VAPID_PUBLIC_KEY }}
         run: |
           SUBDOMAIN="${{ inputs.subdomain || 'status.airboxvip.top' }}"
-          python3 Tools/collect_status_feed.py --out status.json --gates-dir Reports/gates --subdomain "$SUBDOMAIN"
+          python3 Tools/collect_status_feed.py --out status.json --subdomain "$SUBDOMAIN"
 
       - name: Commit updated status.json
         # Self-push credential is ACC0_PAT (this repo's own account, Mohammadlali) --
