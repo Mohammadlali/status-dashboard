@@ -78,7 +78,12 @@ export default async function handler(req, res) {
     res.setHeader('Content-Type', 'application/json');
     res.status(200).send(body);
   } catch (err) {
-    console.error('status error:', err);
-    res.status(502).json({ error: 'Failed to read status.json from R2', detail: err.message });
+    console.error('status error:', err, err.cause);
+    res.status(502).json({
+      error: 'Failed to read status.json from R2',
+      detail: err.message,
+      cause: err.cause ? (err.cause.message || String(err.cause)) : null,
+      code: err.cause && err.cause.code,
+    });
   }
 }
