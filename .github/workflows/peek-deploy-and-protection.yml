@@ -1,0 +1,39 @@
+name: Peek at latest deploy + current Vercel protection state
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  peek:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      GH_TOKEN: ${{ secrets.ACC0 }}
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      REPO: Mohammadlali/status-dashboard
+    steps:
+      - name: Latest deploy-status-feed.yml run
+        run: |
+          set -e
+          gh run list -R "$REPO" --workflow deploy-status-feed.yml --limit 3 --json databaseId,status,conclusion,createdAt --jq '.[] | .createdAt + "  " + .status + "  " + (.conclusion // "-") + "  " + (.databaseId | tostring)'
+
+      - name: Current ssoProtection value
+        run: |
+          set -e
+          curl -s -H "Authorization: Bearer $VERCEL_TOKEN" "https://api.vercel.com/v9/projects/claud-cloud-status" > /tmp/p.json
+          python3 -c "import json; d=json.load(open('/tmp/p.json')); print('ssoProtection:', json.dumps(d.get('ssoProtection'))); print('passwordProtection:', json.dumps(d.get('passwordProtection'))); print('trustedIps:', json.dumps(d.get('trustedIps')))"
+
+      - name: List recent deployments and their readyState
+        run: |
+          set -e
+          curl -s -H "Authorization: Bearer $VERCEL_TOKEN" "https://api.vercel.com/v6/deployments?projectId=prj_UYybpec4bIx8ELzZw1LMuvrzExum&limit=5" > /tmp/deps.json
+          python3 -c "import json; d=json.load(open('/tmp/deps.json')); [print(x.get('uid'), x.get('url'), x.get('readyState'), x.get('target'), x.get('createdAt')) for x in d.get('deployments', [])]"
+
+      - name: Check the alias target and its protection bypass
+        run: |
+          set -e
+          curl -s -H "Authorization: Bearer $VERCEL_TOKEN" "https://api.vercel.com/v4/aliases?projectId=prj_UYybpec4bIx8ELzZw1LMuvrzExum&domain=status.airboxvip.top" > /tmp/alias.json || true
+          cat /tmp/alias.json
+          echo ""
+          echo "=== direct curl to the live domain ==="
+          curl -sI https://status.airboxvip.top/status.json | head -8
