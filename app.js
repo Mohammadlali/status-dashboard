@@ -623,7 +623,7 @@
       if (agyIssueNumber) {
         agyAppendMessage(
           'agy-msg-system',
-          `ادامه‌ی گفتگوی قبلی -- <a href="https://github.com/Mohammadlali/control-room/issues/${agyIssueNumber}" target="_blank" rel="noopener">Issue #${agyIssueNumber}</a>`
+          `ادامه‌ی گفتگوی قبلی -- <a href="https://github.com/mohammadlali0707-stack/agw-workers/issues/${agyIssueNumber}" target="_blank" rel="noopener">Issue #${agyIssueNumber}</a>`
         );
         agyStartPolling();
       }
