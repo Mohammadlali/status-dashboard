@@ -5,9 +5,11 @@
  * control-agy.yml's "Forward to another project's repo" step ran (topic
  * was tbs/airboxvip, not control-room/status_dashboard), it leaves a
  * "Forwarded: <issue url>" comment -- follow it and read the REAL
- * conversation from the target project's own repo instead, since that is
- * where control-agy.yml's own AGY worker actually posts its reply for a
- * forwarded topic (Control-Room's copy gets no further comments after
+ * conversation from mohammadlali0707-stack/agw-workers.
+ * The frontend fetches this to render the ongoing conversation.
+ *
+ * NOTE: This is strictly for the quick-chat mode. A task / @agy
+ * forwarded topic (agw-workers's copy gets no further comments after
  * the forward).
  */
 
@@ -66,13 +68,13 @@ export default async function handler(req, res) {
       return;
     }
 
-    const comments = await fetchComments('Mohammadlali/control-room', issueNumber, acc0Pat);
-    if (comments === null) {
-      res.status(502).json({ error: 'Failed to read Control-Room issue comments' });
+    const comments = await fetchComments('mohammadlali0707-stack/agw-workers', issueNumber, acc0Pat);
+    if (!comments) {
+      res.status(502).json({ error: 'Failed to read agw-workers issue comments' });
       return;
     }
 
-    let sourceRepo = 'Mohammadlali/control-room';
+    let sourceRepo = 'mohammadlali0707-stack/agw-workers';
     let sourceIssue = issueNumber;
     let finalComments = comments;
     let forwarded = false;
