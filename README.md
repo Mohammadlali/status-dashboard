@@ -3,7 +3,7 @@
 Fleet-wide operations status dashboard for **status.airboxvip.top**.
 
 Shows live health for:
-- `Mohammadlali/Claud-Cloud-Project` (CCP) gates
+- `mohammadlali0707-stack/Claud-Cloud-Project` (CCP) gates
 - `mohammadlali0707-stack/Control-Room` gates
 - All 9 fleet accounts (recent commits, open/blocked/stale issues, recent Actions runs)
 
@@ -13,9 +13,16 @@ This dashboard used to live inside CCP's own repo (`StatusFeed/` +
 `.github/workflows/deploy-status-feed.yml`). It was moved out 2026-09-11
 because it was never CCP-specific -- it reports on Control-Room and all 9
 accounts too, and CCP itself now lives entirely on a different GitHub
-account (ACC6, `mohammadlali0707-stack`). A fleet-wide dashboard belongs to
-the account that manages the fleet (ACC0, `Mohammadlali`), not bundled
-inside one product repo hosted on a different account.
+account (ACC6, `mohammadlali0707-stack`). At the time, a fleet-wide
+dashboard belonging to the account that manages the fleet meant ACC0
+(`Mohammadlali`), and this repo was created there.
+
+**Corrected 2026-09-13: this repo itself now lives on ACC6
+(`mohammadlali0707-stack/status-dashboard`), alongside Control-Room and
+CCP** -- ACC0 no longer manages the fleet (Control-Room moved off it too;
+see `mohammadlali0707-stack/Control-Room`'s `Team/COMPANY_SCOPE.md`, "What
+changed 2026-09-13"), so the original placement reasoning above no longer
+holds, though the repo's identity (not CCP-specific) is unchanged.
 
 ## Layout
 
@@ -34,7 +41,8 @@ inside one product repo hosted on a different account.
 ## Secrets this repo needs
 
 `ACC0_PAT` .. `ACC8_PAT` (one PAT per fleet account, for cross-account status
-queries -- `ACC0_PAT` doubles as this repo's own self-push credential),
+queries -- `ACC0_PAT` doubles as this repo's own self-push credential, a
+cross-account one as of 2026-09-13 since this repo itself moved to ACC6),
 `VERCEL_TOKEN`, `CF_API_TOKEN`, `CF_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`,
 `R2_SECRET_ACCESS_KEY`, `R2_S3_ENDPOINT`, `VAPID_PRIVATE_KEY`,
 `VAPID_PUBLIC_KEY` (optional).
