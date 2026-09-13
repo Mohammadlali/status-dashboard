@@ -34,8 +34,8 @@ const PROJECT_LABELS = {
   status_dashboard: 'project:status_dashboard',
 };
 
-const TRAILING_ISSUE_MARKER_RE = /\s*@issue\s*$/i;
-const REPO = 'Mohammadlali/control-room';
+const TRAILING_ISSUE_MARKER_RE = /\s*@agy\s*$/i;
+const REPO = 'mohammadlali0707-stack/agw-workers';
 
 async function createIssue({ pat, title, body, labels }) {
   const resp = await fetch(`https://api.github.com/repos/${REPO}/issues`, {
@@ -106,18 +106,10 @@ export default async function handler(req, res) {
     }
 
     const isTask = TRAILING_ISSUE_MARKER_RE.test(message);
-    if (isTask) {
-      message = message.replace(TRAILING_ISSUE_MARKER_RE, '').trim();
-      if (!message) {
-        res.status(400).json({ error: 'message is empty after removing "@issue"' });
-        return;
-      }
-    }
+    // We do NOT strip the marker here anymore, so the Manager Workflow can read it.
 
-    // The body must start literally with "@agy " for control-agy.yml's
-    // trigger condition (startsWith(...body, '@agy')), for both an issue
-    // body and a follow-up comment body.
-    const agyBody = `@agy ${message}`;
+    // The user will manually append @agy at the end. We send the message exactly as typed.
+    const agyBody = message;
 
     // Follow-up quick-chat turn: comment on the existing thread instead of
     // opening a new issue. Only valid when NOT a task -- "@issue" always
