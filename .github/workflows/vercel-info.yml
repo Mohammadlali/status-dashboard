@@ -1,0 +1,11 @@
+name: Vercel Project Info
+on: [workflow_dispatch]
+jobs:
+  info:
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          curl -s -H "Authorization: Bearer $VERCEL_TOKEN" https://api.vercel.com/v9/projects/claud-cloud-status > /tmp/project.json
+          cat /tmp/project.json
