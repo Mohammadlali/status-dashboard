@@ -99,9 +99,9 @@ export default async function handler(req, res) {
       return;
     }
 
-    const pat = process.env.AGY_CHAT_ACC0_PAT;
+    const pat = process.env.AGY_CHAT_ACC6_PAT;
     if (!pat) {
-      res.status(500).json({ error: 'AGY_CHAT_ACC0_PAT is not configured on Vercel' });
+      res.status(500).json({ error: 'AGY_CHAT_ACC6_PAT is not configured on Vercel' });
       return;
     }
 
