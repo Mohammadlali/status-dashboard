@@ -1,0 +1,29 @@
+name: One-off -- enable Vercel Authentication (SSO protection) on the ACC6 project
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  enable:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+    steps:
+      - name: Enable Vercel Authentication for all deployment types
+        run: |
+          RESP=$(curl -sS -X PATCH "https://api.vercel.com/v9/projects/$VERCEL_PROJECT_ID" \
+            -H "Authorization: Bearer $VERCEL_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{"ssoProtection":{"deploymentType":"all"}}')
+          echo "$RESP" | jq '{name, ssoProtection, error}'
+
+      - name: Read back to confirm
+        run: |
+          curl -sS "https://api.vercel.com/v9/projects/$VERCEL_PROJECT_ID" \
+            -H "Authorization: Bearer $VERCEL_TOKEN" \
+            | jq '{name, ssoProtection}'
