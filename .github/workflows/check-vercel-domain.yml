@@ -1,0 +1,44 @@
+name: One-off -- check status2.airboxvip.top's Vercel domain assignment (ACC6 project)
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+    steps:
+      - name: Guard
+        run: |
+          if [ -z "$VERCEL_TOKEN" ] || [ -z "$VERCEL_PROJECT_ID" ]; then
+            echo "::error::VERCEL_TOKEN or VERCEL_PROJECT_ID not set"
+            exit 1
+          fi
+
+      - name: List current domains on the ACC6 project
+        run: |
+          echo "=== project domains (this project) ==="
+          curl -sS "https://api.vercel.com/v9/projects/$VERCEL_PROJECT_ID/domains?teamId=$VERCEL_ORG_ID" \
+            -H "Authorization: Bearer $VERCEL_TOKEN" | jq .
+
+      - name: Attempt to add status2.airboxvip.top to this project (diagnostic only)
+        run: |
+          echo "=== attempt add domain ==="
+          curl -sS -X POST "https://api.vercel.com/v10/projects/$VERCEL_PROJECT_ID/domains?teamId=$VERCEL_ORG_ID" \
+            -H "Authorization: Bearer $VERCEL_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{"name":"status2.airboxvip.top"}' | jq .
+
+      - name: Whoami / team info
+        run: |
+          echo "=== user ==="
+          curl -sS "https://api.vercel.com/v2/user" -H "Authorization: Bearer $VERCEL_TOKEN" | jq '.user.email, .user.username'
+          echo "=== teams ==="
+          curl -sS "https://api.vercel.com/v2/teams" -H "Authorization: Bearer $VERCEL_TOKEN" | jq '.teams[]? | {id, slug, name}'
