@@ -1,0 +1,53 @@
+name: Force-refresh status feed (dispatch the remote 5-min job on demand)
+
+# The real status feed refresh runs on Mohammadlali/agw-workers
+# (deploy-status-feed-remote.yml, cron '*/5 * * * *'), not here -- see that
+# workflow's own header for why it moved off this repo 2026-09-12. Added
+# 2026-09-14 because the owner reported status2.airboxvip.top showing
+# stale gate counts (5 fail/38 pass) well after several real fixes had
+# already pushed CCP to 46 pass/1 fail -- this repo cannot see that
+# workflow's own Actions run history (Mohammadlali/agw-workers is outside
+# this session's account scope entirely), so whether its schedule is
+# actually firing every 5 minutes could not be confirmed or denied
+# directly. This gives a manual, on-demand way to force one refresh cycle
+# without waiting on (or being able to verify) the schedule -- the same
+# "push-fallback because GitHub schedules are measured to be unreliable
+# in this org" reasoning tbs-morning.yml already documents for its own
+# cron.
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      ACC0_PAT: ${{ secrets.ACC0_PAT }}
+    steps:
+      - name: Guard
+        run: |
+          if [ -z "$ACC0_PAT" ]; then
+            echo "::error::secrets.ACC0_PAT is not set on status-dashboard -- cannot dispatch the remote refresh on agw-workers."
+            exit 1
+          fi
+
+      - name: Dispatch deploy-status-feed-remote.yml on Mohammadlali/agw-workers
+        run: |
+          set -e
+          CODE=$(curl -sS -o /tmp/dispatch_resp.txt -w '%{http_code}' -X POST \
+            -H "Authorization: Bearer $ACC0_PAT" -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/Mohammadlali/agw-workers/actions/workflows/deploy-status-feed-remote.yml/dispatches" \
+            -d '{"ref":"main"}')
+          echo "dispatch HTTP $CODE"
+          cat /tmp/dispatch_resp.txt
+          if [ "$CODE" != "204" ]; then
+            echo "::error::could not dispatch deploy-status-feed-remote.yml -- see response above."
+            exit 1
+          fi
+          echo "Dispatched. Watch it at:"
+          echo "https://github.com/Mohammadlali/agw-workers/actions/workflows/deploy-status-feed-remote.yml"
