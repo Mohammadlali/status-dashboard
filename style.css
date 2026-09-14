@@ -989,6 +989,108 @@ body {
   border-color: var(--blue);
 }
 
+.btn-agy-plan {
+  align-self: flex-end;
+  background-color: var(--bg-accent);
+  border-color: var(--border-light);
+  color: var(--text-main);
+}
+
+.agy-proposal-card {
+  align-self: stretch;
+  max-width: 100%;
+  background-color: var(--bg-accent);
+  border: 1px solid var(--border-light);
+  border-radius: 10px;
+  padding: 0.75rem 0.9rem;
+  font-size: 0.85rem;
+  line-height: 1.7;
+}
+
+.agy-proposal-summary {
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin-bottom: 0.6rem;
+}
+
+.agy-proposal-tasks {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 0.7rem 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.agy-proposal-task {
+  border: 1px solid var(--border-light);
+  border-radius: 6px;
+  padding: 0.4rem 0.6rem;
+  font-size: 0.78rem;
+}
+
+.agy-proposal-task-title {
+  font-weight: 600;
+}
+
+.agy-proposal-task-meta {
+  color: var(--text-sub);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+}
+
+.agy-proposal-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.btn-proposal-accept {
+  background-color: var(--green-bg);
+  border: 1px solid var(--green-border);
+  color: var(--green);
+}
+
+.btn-proposal-decline {
+  background-color: var(--red-bg);
+  border: 1px solid var(--red-border);
+  color: var(--red);
+}
+
+.agy-proposal-decline-box {
+  display: none;
+  margin-top: 0.5rem;
+  gap: 0.4rem;
+  flex-direction: column;
+}
+
+.agy-proposal-decline-box.open {
+  display: flex;
+}
+
+.agy-proposal-decline-note {
+  resize: vertical;
+  min-height: 2.4rem;
+  background-color: var(--bg-main, transparent);
+  color: var(--text-main);
+  border: 1px solid var(--border-light);
+  border-radius: 6px;
+  padding: 0.4rem 0.6rem;
+  font-family: var(--font-sans);
+  font-size: 0.8rem;
+}
+
+.agy-proposal-card.is-superseded .agy-proposal-actions,
+.agy-proposal-card.is-superseded .agy-proposal-decline-box {
+  display: none;
+}
+
+.agy-proposal-status {
+  margin-top: 0.5rem;
+  font-size: 0.75rem;
+  color: var(--text-sub);
+}
+
 .btn-agy-send {
   align-self: flex-end;
   background-color: var(--blue);

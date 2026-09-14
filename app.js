@@ -515,6 +515,111 @@
     agyPollTimer = setInterval(agyPollReplies, AGY_POLL_INTERVAL_MS);
   }
 
+  // A bot reply carrying a task-breakdown proposal (agy-plan-bot.yml on
+  // agw-workers) ends with a fenced ```json block: {"kind":
+  // "tbs_task_proposal", "tasks": [...]}. Detected here so it renders as
+  // an Accept/Decline card instead of plain chat text.
+  function agyParseProposal(body) {
+    if (!body) return null;
+    const m = /```json\s*([\s\S]*?)```/.exec(body);
+    if (!m) return null;
+    try {
+      const obj = JSON.parse(m[1]);
+      if (obj && obj.kind === 'tbs_task_proposal' && Array.isArray(obj.tasks)) {
+        return { proposal: obj, prose: body.slice(0, m.index).trim() };
+      }
+    } catch (e) {
+      // not valid JSON -- not a proposal, fall through to plain text
+    }
+    return null;
+  }
+
+  function agyRenderProposalCard(parsed, createdAt) {
+    const { proposal, prose } = parsed;
+
+    // Only the LATEST proposal on the issue is what agy-plan-dispatch.yml
+    // will actually read -- disable every earlier card's buttons so a
+    // stale one can't be accidentally approved.
+    document
+      .querySelectorAll('.agy-proposal-card')
+      .forEach((el) => el.classList.add('is-superseded'));
+
+    const tasks = proposal.tasks || [];
+    const taskItems = tasks
+      .map((t) => {
+        const acc = t && t.account !== undefined && t.account !== null ? t.account : '?';
+        const member = t && t.member_id ? `${escapeHtml(t.member_id)} · ` : '';
+        return `<li class="agy-proposal-task">
+          <div class="agy-proposal-task-title">${escapeHtml((t && t.title) || 'task')}</div>
+          <div class="agy-proposal-task-meta">${member}ACC${acc}</div>
+        </li>`;
+      })
+      .join('');
+
+    const html = `
+      <div class="agy-proposal-summary">${escapeHtml(prose)}</div>
+      <ul class="agy-proposal-tasks">${taskItems}</ul>
+      <div class="agy-proposal-actions">
+        <button type="button" class="btn-sm btn-proposal-accept" data-proposal-action="accept">✅ تایید و اجرا (${tasks.length} کار)</button>
+        <button type="button" class="btn-sm btn-proposal-decline" data-proposal-action="decline-toggle">✏️ رد + اصلاح</button>
+      </div>
+      <div class="agy-proposal-decline-box">
+        <textarea class="agy-proposal-decline-note" rows="2" placeholder="چه چیزی باید عوض بشه؟"></textarea>
+        <button type="button" class="btn-sm btn-proposal-decline" data-proposal-action="decline-send">ارسال اصلاح</button>
+      </div>
+      <div class="agy-proposal-status"></div>
+      <span class="agy-msg-meta">AGY · ${timeAgo(createdAt)}</span>
+    `;
+
+    const el = agyAppendMessage('agy-msg-bot agy-proposal-card', html);
+    if (!el) return;
+
+    const statusEl = el.querySelector('.agy-proposal-status');
+    const declineBox = el.querySelector('.agy-proposal-decline-box');
+
+    el.querySelector('[data-proposal-action="accept"]').addEventListener('click', () => {
+      agyProposalAction(el, 'accept', '');
+    });
+    el.querySelector('[data-proposal-action="decline-toggle"]').addEventListener('click', () => {
+      declineBox.classList.toggle('open');
+    });
+    el.querySelector('[data-proposal-action="decline-send"]').addEventListener('click', () => {
+      const note = el.querySelector('.agy-proposal-decline-note').value.trim();
+      if (!note) {
+        statusEl.textContent = 'توضیح اصلاح رو بنویس.';
+        return;
+      }
+      agyProposalAction(el, 'decline', note);
+    });
+  }
+
+  async function agyProposalAction(cardEl, action, note) {
+    const statusEl = cardEl.querySelector('.agy-proposal-status');
+    const buttons = cardEl.querySelectorAll('button');
+    buttons.forEach((b) => { b.disabled = true; });
+    statusEl.textContent = action === 'accept' ? 'در حال تایید...' : 'در حال ارسال اصلاح...';
+    try {
+      const resp = await fetch('/api/agy_plan_action', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ issue_number: agyIssueNumber, action, note }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) {
+        statusEl.textContent = `خطا: ${escapeHtml(data.error || 'نامشخص')}`;
+        buttons.forEach((b) => { b.disabled = false; });
+        return;
+      }
+      cardEl.classList.add('is-superseded');
+      statusEl.textContent = action === 'accept'
+        ? '✅ تایید شد -- دیسپچ دسته‌ای در حال اجراست.'
+        : '✏️ اصلاح ارسال شد -- منتظر پروپوزال جدید...';
+    } catch (err) {
+      statusEl.textContent = 'خطا در ارتباط.';
+      buttons.forEach((b) => { b.disabled = false; });
+    }
+  }
+
   async function agyPollReplies() {
     if (!agyIssueNumber) return;
     try {
@@ -526,10 +631,15 @@
         if (agySeenReplyIds.has(id)) continue;
         agySeenReplyIds.add(id);
         if (reply.author && reply.author.toLowerCase().includes(AGY_SELF_LOGIN_HINT)) continue;
-        agyAppendMessage(
-          'agy-msg-bot',
-          `${escapeHtml(reply.body || '')}<span class="agy-msg-meta">AGY · ${timeAgo(reply.created_at)}</span>`
-        );
+        const parsed = agyParseProposal(reply.body);
+        if (parsed) {
+          agyRenderProposalCard(parsed, reply.created_at);
+        } else {
+          agyAppendMessage(
+            'agy-msg-bot',
+            `${escapeHtml(reply.body || '')}<span class="agy-msg-meta">AGY · ${timeAgo(reply.created_at)}</span>`
+          );
+        }
       }
     } catch (err) {
       console.error('agy_status poll failed:', err);
@@ -594,6 +704,7 @@
     const form = document.getElementById('agy-chat-form');
     const input = document.getElementById('agy-chat-input');
     const newChatBtn = document.getElementById('btn-agy-new-chat');
+    const planBtn = document.getElementById('agy-chat-plan');
     if (!form || !input) return;
 
     form.addEventListener('submit', (e) => {
@@ -603,6 +714,19 @@
       input.value = '';
       agySendMessage(text);
     });
+
+    if (planBtn) {
+      planBtn.addEventListener('click', () => {
+        const text = input.value.trim();
+        if (!text) return;
+        input.value = '';
+        // Strip any marker the user may have typed by habit -- this
+        // button always asks for a PLAN, never a direct task or a
+        // dispatch approval, regardless of what's in the textbox.
+        const stripped = text.replace(/\s*@agy(-plan(-approved)?)?\s*$/i, '').trim();
+        agySendMessage(`${stripped} @agy-plan`);
+      });
+    }
 
     input.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey) {

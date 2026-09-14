@@ -36,7 +36,11 @@ const PROJECT_LABELS = {
   status_dashboard: 'project:status_dashboard',
 };
 
-const TRAILING_ISSUE_MARKER_RE = /\s*@agy\s*$/i;
+// Matches a plain @agy task marker, or one of the planning-flow markers
+// (@agy-plan / @agy-plan-approved -- see agy-plan-bot.yml and
+// agy-plan-dispatch.yml on agw-workers) -- all three should open a fresh,
+// unlabelled, real-task issue rather than falling through to quick_chat.
+const TRAILING_ISSUE_MARKER_RE = /\s*@agy(-plan(-approved)?)?\s*$/i;
 const REPO = 'mohammadlali0707-stack/agw-workers';
 
 async function createIssue({ pat, title, body, labels }) {
