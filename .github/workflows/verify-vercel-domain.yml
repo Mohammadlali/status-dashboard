@@ -1,0 +1,27 @@
+name: One-off -- trigger Vercel domain re-verification for status2.airboxvip.top
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+    steps:
+      - name: Trigger verification
+        run: |
+          echo "=== POST verify ==="
+          curl -sS -X POST "https://api.vercel.com/v9/projects/$VERCEL_PROJECT_ID/domains/status2.airboxvip.top/verify" \
+            -H "Authorization: Bearer $VERCEL_TOKEN" | jq .
+
+      - name: Re-check domain status
+        run: |
+          echo "=== GET domain ==="
+          curl -sS "https://api.vercel.com/v9/projects/$VERCEL_PROJECT_ID/domains/status2.airboxvip.top" \
+            -H "Authorization: Bearer $VERCEL_TOKEN" | jq .
