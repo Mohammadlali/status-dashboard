@@ -1,0 +1,32 @@
+name: One-off -- diagnose the 307 on the bypass header attempt
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      VERCEL_PROTECTION_BYPASS: ${{ secrets.VERCEL_PROTECTION_BYPASS }}
+    steps:
+      - name: First request -- dump headers, don't follow redirect
+        run: |
+          curl -sS -D - -o /tmp/body1.html \
+            -H "x-vercel-protection-bypass: $VERCEL_PROTECTION_BYPASS" \
+            -H "x-vercel-set-bypass-cookie: true" \
+            "https://status2.airboxvip.top/api/status"
+          echo "--- body (first 200 bytes) ---"
+          head -c 200 /tmp/body1.html
+
+      - name: Second attempt -- follow redirects with a cookie jar
+        run: |
+          curl -sS -L -c /tmp/cookies.txt -b /tmp/cookies.txt -w "\nFinal HTTP %{http_code}\n" \
+            -H "x-vercel-protection-bypass: $VERCEL_PROTECTION_BYPASS" \
+            -H "x-vercel-set-bypass-cookie: true" \
+            "https://status2.airboxvip.top/api/status" -o /tmp/body2.html
+          echo "--- body (first 300 bytes) ---"
+          head -c 300 /tmp/body2.html
