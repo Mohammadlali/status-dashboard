@@ -1,40 +1,5 @@
 name: Deploy Status Dashboard
 
-# Fleet-wide ops status dashboard for status.airboxvip.top (CCP gates +
-# Control-Room gates + all 9 accounts). Moved out of
-# Mohammadlali/Claud-Cloud-Project 2026-09-11 -- it was never CCP-specific,
-# it just used to live in CCP's repo. Same Vercel project name
-# ("claud-cloud-status", see vercel.json) and the same VERCEL_TOKEN carry
-# over from the old location, so the live domain alias is unaffected by
-# the move.
-#
-# - Deploys the static site + api/* functions (repo root) to Vercel
-#   project 'status-dashboard'.
-# - READ-FIRST Cloudflare DNS check: adds only the status subdomain CNAME if missing;
-#   never modifies or deletes any existing DNS records.
-#
-# Cutover 2026-09-12: the 5-minute DATA refresh (status.json) moved to
-# Mohammadlali/agw-workers' deploy-status-feed-remote.yml, and status.json
-# itself moved out of git entirely into a GitHub Gist -- see that
-# workflow's own header and api/status.js for why (this repo's old
-# 5-minute `vercel deploy` cycle blew through Vercel's free-tier cap of
-# 100 deployments/day). This workflow now only deploys actual SITE CODE
-# (index.html/app.js/style.css/api/**), which changes rarely -- triggered
-# by pushes to those paths, plus manual dispatch for ad-hoc redeploys.
-#
-# Second cutover, same day: the OLD Vercel account/project this workflow
-# used to deploy to directly (secrets.VERCEL_TOKEN) hit that same
-# deployments-per-day cap and is blocked for ~24h. The owner's new Vercel
-# account/project (domain status2.airboxvip.top for now) is the working
-# deploy target going forward, but a GitHub secret is write-only -- there
-# is no way to copy the new project's credentials onto this repo without
-# the owner re-entering them by hand. So instead of deploying here
-# directly, this workflow now dispatches
-# Mohammadlali/agw-workers' deploy-status-dashboard-remote.yml (which
-# already holds the new project's credentials as _NEW-suffixed secrets,
-# proven working by test-agy-chat-live.yml) via the Actions API, using
-# this repo's own ACC0_PAT (already present here for the Gist publish).
-
 on:
   push:
     branches: [main]
@@ -48,31 +13,19 @@ on:
       - 'api/**'
       - 'icons/**'
   workflow_dispatch:
-    inputs:
-      subdomain:
-        description: 'Target subdomain on airboxvip.top'
-        required: false
-        default: 'status.airboxvip.top'
-        type: string
-      deploy_vercel:
-        description: 'Deploy static site to Vercel'
-        required: false
-        default: true
-        type: boolean
-      ensure_dns:
-        description: 'Ensure Cloudflare DNS CNAME record exists'
-        required: false
-        default: true
-        type: boolean
 
 permissions:
   contents: read
 
 jobs:
-  deploy-feed:
-    name: Build and Deploy Status Dashboard
+  deploy:
+    name: Build and Deploy to ACC6 Vercel
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -80,51 +33,17 @@ jobs:
           ref: main
           fetch-depth: 0
 
-      - name: Ensure Cloudflare DNS Record
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.ensure_dns != false }}
-        env:
-          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
-          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
-        run: |
-          SUBDOMAIN="${{ inputs.subdomain || 'status.airboxvip.top' }}"
-          python3 Tools/ensure_cloudflare_dns.py --zone airboxvip.top --subdomain "$SUBDOMAIN" --target cname.vercel-dns.com
-
-      - name: Trigger remote deploy to the new Vercel project (agw-workers)
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.deploy_vercel != false }}
-        env:
-          ACC0_PAT: ${{ secrets.ACC0_PAT }}
+      - name: Deploy to Vercel
         run: |
           set -e
-          if [ -z "$ACC0_PAT" ]; then
-            echo "::error::secrets.ACC0_PAT is not set on status-dashboard -- cannot dispatch the remote deploy on agw-workers."
-            exit 1
+          if [ -z "$VERCEL_TOKEN" ]; then echo "::error::secrets.VERCEL_TOKEN is not set"; exit 1; fi
+          echo "Deploying to Vercel project (VERCEL_PROJECT_ID=$VERCEL_PROJECT_ID)..."
+          DEPLOY_OUTPUT=""
+          if npx --yes vercel build --prod --token="$VERCEL_TOKEN" --yes; then
+            DEPLOY_OUTPUT=$(npx --yes vercel deploy --prebuilt --prod --token="$VERCEL_TOKEN" --yes)
+          else
+            DEPLOY_OUTPUT=$(timeout 180 npx --yes vercel deploy --prod --token="$VERCEL_TOKEN" --yes || echo "")
           fi
-          SHA="${{ github.sha }}"
-          CODE=$(curl -sS -o /tmp/dispatch_resp.txt -w "%{http_code}" -X POST \
-            -H "Authorization: Bearer $ACC0_PAT" \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/Mohammadlali/agw-workers/actions/workflows/deploy-status-dashboard-remote.yml/dispatches" \
-            -d "{\"ref\":\"main\",\"inputs\":{\"commit_sha\":\"$SHA\"}}")
-          echo "dispatch HTTP $CODE"
-          cat /tmp/dispatch_resp.txt
-          if [ "$CODE" != "204" ]; then
-            echo "::error::Failed to dispatch deploy-status-dashboard-remote.yml on agw-workers"
-            exit 1
-          fi
-          echo "Dispatched deploy of commit $SHA -- see https://github.com/Mohammadlali/agw-workers/actions/workflows/deploy-status-dashboard-remote.yml"
-
-      - name: Deployment Verification Summary
-        run: |
-          echo "============================================="
-          echo "STATUS DASHBOARD DEPLOYMENT DISPATCHED"
-          echo "The actual Vercel build+deploy now runs on agw-workers"
-          echo "(deploy-status-dashboard-remote.yml), against the owner's new"
-          echo "Vercel project, since the old one this repo used to deploy to"
-          echo "directly is over its free-tier daily deployment cap."
-          echo "Current working domain: https://status2.airboxvip.top"
-          echo "(becomes status.airboxvip.top once the owner migrates DNS)"
-          echo "Verification commands:"
-          echo "  curl -I https://status2.airboxvip.top"
-          echo "  curl -s https://status2.airboxvip.top/api/status | jq .overview"
-          echo "============================================="
+          echo "Deployment raw output: $DEPLOY_OUTPUT"
+          
+          # We don't try to assign custom domain here yet until you migrate DNS
