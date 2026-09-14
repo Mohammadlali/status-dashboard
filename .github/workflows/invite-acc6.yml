@@ -1,0 +1,13 @@
+name: Invite ACC6 to ACC0 repos
+on: [workflow_dispatch]
+jobs:
+  invite:
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          ACC0_PAT: ${{ secrets.ACC0_PAT }}
+        run: |
+          for REPO in Control-Room agw-workers; do
+            echo "Inviting mohammadlali0707-stack to Mohammadlali/$REPO..."
+            curl -s -X PUT -H "Authorization: Bearer $ACC0_PAT" -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/Mohammadlali/$REPO/collaborators/mohammadlali0707-stack
+          done
