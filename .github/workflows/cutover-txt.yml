@@ -1,0 +1,51 @@
+name: One-off -- remove old-project TXT verification record, complete ACC6 cutover
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  cutover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+      OLD_RECORD_ID: "76a432cbc1a270cfc0cc09499dc1d776"
+    steps:
+      - name: Confirm the old record's current content before deleting (read-first)
+        run: |
+          RESP=$(curl -sS "https://api.cloudflare.com/client/v4/zones/5ea59caac61c6bdc5f5ed29ba7005c26/dns_records/$OLD_RECORD_ID" \
+            -H "Authorization: Bearer $CF_API_TOKEN")
+          echo "$RESP" | jq .
+          CONTENT=$(echo "$RESP" | jq -r '.result.content')
+          echo "About to delete record $OLD_RECORD_ID with content: $CONTENT"
+          case "$CONTENT" in
+            *"vc-domain-verify=status2.airboxvip.top,5dfc34deeeb7c697ad0a"*) echo "Content matches expected stale value -- safe to delete." ;;
+            *) echo "::error::content does not match the expected stale value -- aborting rather than deleting something unexpected."; exit 1 ;;
+          esac
+
+      - name: Delete the old (stale) TXT verification record
+        run: |
+          RESP=$(curl -sS -X DELETE "https://api.cloudflare.com/client/v4/zones/5ea59caac61c6bdc5f5ed29ba7005c26/dns_records/$OLD_RECORD_ID" \
+            -H "Authorization: Bearer $CF_API_TOKEN")
+          echo "$RESP" | jq .
+          SUCCESS=$(echo "$RESP" | jq -r '.success')
+          if [ "$SUCCESS" != "true" ]; then
+            echo "::error::delete failed"
+            exit 1
+          fi
+          echo "Deleted."
+
+      - name: Trigger Vercel re-verification
+        run: |
+          curl -sS -X POST "https://api.vercel.com/v9/projects/$VERCEL_PROJECT_ID/domains/status2.airboxvip.top/verify" \
+            -H "Authorization: Bearer $VERCEL_TOKEN" | jq .
+
+      - name: Check final domain status
+        run: |
+          curl -sS "https://api.vercel.com/v9/projects/$VERCEL_PROJECT_ID/domains/status2.airboxvip.top" \
+            -H "Authorization: Bearer $VERCEL_TOKEN" | jq .
