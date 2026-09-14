@@ -1,0 +1,40 @@
+name: One-off -- Vercel API diag round 2 (no teamId, check project + org id match)
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+    steps:
+      - name: Project details WITHOUT teamId
+        run: |
+          echo "=== GET project (no teamId) ==="
+          curl -sS "https://api.vercel.com/v9/projects/$VERCEL_PROJECT_ID" \
+            -H "Authorization: Bearer $VERCEL_TOKEN" | jq '{id, name, accountId}'
+
+      - name: Project details WITH teamId
+        run: |
+          echo "=== GET project (with teamId) ==="
+          curl -sS "https://api.vercel.com/v9/projects/$VERCEL_PROJECT_ID?teamId=$VERCEL_ORG_ID" \
+            -H "Authorization: Bearer $VERCEL_TOKEN" | jq '{id, name, accountId, error}'
+
+      - name: Domains WITHOUT teamId
+        run: |
+          echo "=== domains (no teamId) ==="
+          curl -sS "https://api.vercel.com/v9/projects/$VERCEL_PROJECT_ID/domains" \
+            -H "Authorization: Bearer $VERCEL_TOKEN" | jq .
+
+      - name: Print VERCEL_ORG_ID vs personal account id
+        run: |
+          echo "VERCEL_ORG_ID is: $VERCEL_ORG_ID"
+          echo "=== v2/user accountId-ish fields ==="
+          curl -sS "https://api.vercel.com/v2/user" -H "Authorization: Bearer $VERCEL_TOKEN" | jq '.user | {id, uid, username, email}'
