@@ -1,0 +1,23 @@
+name: Fix Vercel Git Connection
+on: [workflow_dispatch]
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          cat << 'EOF' > /tmp/payload.json
+          {
+            "link": {
+              "type": "github",
+              "repo": "status-dashboard",
+              "repoId": 1366473352,
+              "org": "mohammadlali0707-stack"
+            }
+          }
+          EOF
+          echo "Patching Vercel project..."
+          CODE=$(curl -s -o /tmp/resp.json -w "%{http_code}" -X PATCH -H "Authorization: Bearer $VERCEL_TOKEN" -H "Content-Type: application/json" -d @/tmp/payload.json https://api.vercel.com/v9/projects/claud-cloud-status)
+          echo "HTTP $CODE"
+          cat /tmp/resp.json
