@@ -1,0 +1,63 @@
+name: One-off -- add Vercel domain-verification TXT record for status2.airboxvip.top
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  add-txt:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+    steps:
+      - name: Guard
+        run: |
+          if [ -z "$CF_API_TOKEN" ]; then
+            echo "::error::CF_API_TOKEN is not set on status-dashboard"
+            exit 1
+          fi
+
+      - name: Read-first, then create the TXT record if missing (never touches other records)
+        run: |
+          set -e
+          ZONE="airboxvip.top"
+          RECORD_NAME="_vercel.airboxvip.top"
+          RECORD_VALUE="vc-domain-verify=status2.airboxvip.top,3f311acc57a5573436bf"
+
+          ZONE_ID=$(curl -sS "https://api.cloudflare.com/client/v4/zones?name=$ZONE" \
+            -H "Authorization: Bearer $CF_API_TOKEN" -H "Content-Type: application/json" \
+            | jq -r '.result[0].id')
+          if [ -z "$ZONE_ID" ] || [ "$ZONE_ID" == "null" ]; then
+            echo "::error::could not resolve zone id for $ZONE"
+            exit 1
+          fi
+          echo "Zone ID: $ZONE_ID"
+
+          EXISTING=$(curl -sS "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/dns_records?type=TXT&name=$RECORD_NAME" \
+            -H "Authorization: Bearer $CF_API_TOKEN" -H "Content-Type: application/json")
+          COUNT=$(echo "$EXISTING" | jq '.result | length')
+          echo "Existing TXT records at $RECORD_NAME: $COUNT"
+          echo "$EXISTING" | jq '.result[] | {id, name, content}'
+
+          # Check if a record with the exact required value already exists
+          ALREADY=$(echo "$EXISTING" | jq --arg v "$RECORD_VALUE" '[.result[] | select(.content == $v)] | length')
+          if [ "$ALREADY" -gt 0 ]; then
+            echo "READ-FIRST: the exact required TXT record already exists. Leaving untouched."
+            exit 0
+          fi
+
+          echo "Creating new TXT record (existing unrelated TXT records, if any, are left untouched)..."
+          CREATE_RESP=$(curl -sS -X POST "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/dns_records" \
+            -H "Authorization: Bearer $CF_API_TOKEN" -H "Content-Type: application/json" \
+            -d "$(jq -n --arg name "$RECORD_NAME" --arg content "$RECORD_VALUE" \
+                  '{type:"TXT", name:$name, content:$content, ttl:1}')")
+          echo "$CREATE_RESP" | jq .
+          SUCCESS=$(echo "$CREATE_RESP" | jq -r '.success')
+          if [ "$SUCCESS" != "true" ]; then
+            echo "::error::Cloudflare rejected the TXT record creation"
+            exit 1
+          fi
+          echo "SUCCESS: TXT record created."
