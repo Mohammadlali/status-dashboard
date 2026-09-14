@@ -486,7 +486,7 @@
     return '<div class="agy-chat-empty" id="agy-chat-empty">' +
       'هر سوالی درباره‌ی شرکت بپرس -- AGY با آگاهی از اسناد داخلی جواب می‌دهد. ' +
       'برای واگذاری یک کار واقعی (کد، رفع باگ، دیپلوی) در انتهای پیام ' +
-      '<code dir="ltr">@issue</code> بنویس تا یک ایشوی رسمی باز شود.</div>';
+      '<code dir="ltr">@agy</code> بنویس تا یک ایشوی رسمی باز شود.</div>';
   }
 
   function agyAppendMessage(cls, html) {

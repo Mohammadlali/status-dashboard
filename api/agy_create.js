@@ -8,18 +8,20 @@
  * wants every reply attributed to the same @agy bot, not a bare Claude
  * call), so this one endpoint serves both chat modes the frontend offers:
  *
- * - Plain message, no trailing "@issue": a quick company question. First
+ * - Plain message, no trailing "@agy": a quick company question. First
  *   message of a session -> opens an issue labelled `mode:quick_chat`
  *   (control-agy.yml reads that label and tells AGY to just answer from
  *   Team/START_HERE.md + Team/COMPANY_SCOPE.md, no repo changes).
  *   Follow-up messages -> pass the `issue_number` the first call
  *   returned, and this posts an `@agy `-prefixed COMMENT on that same
  *   issue instead of opening a new one, continuing the same thread.
- * - Message ending in "@issue" (case-insensitive, whitespace-tolerant):
- *   the marker is stripped and a brand-new, unlabelled issue is always
- *   opened -- this is a real task, and Tools/route_topic.py +
- *   control-agy.yml's full STEP 0-5 pipeline (code, gates, commit) runs
- *   on it, same as opening the issue by hand on GitHub would.
+ * - Message ending in "@agy" (case-insensitive, whitespace-tolerant): the
+ *   marker is NOT stripped (kept verbatim so the Manager Workflow can read
+ *   it, and so agy-issue-bot.yml's own trailing-marker trigger still
+ *   matches once the issue lands) -- this is a real task, and
+ *   Tools/route_topic.py + control-agy.yml's full STEP 0-5 pipeline
+ *   (code, gates, commit) runs on it, same as opening the issue by hand
+ *   on GitHub would.
  *
  * This page is only reachable by the owner (Vercel Deployment Protection
  * / SSO stays on deliberately -- see Team/CHANGELOG.md, commit a1792b4 in
@@ -112,7 +114,7 @@ export default async function handler(req, res) {
     const agyBody = message;
 
     // Follow-up quick-chat turn: comment on the existing thread instead of
-    // opening a new issue. Only valid when NOT a task -- "@issue" always
+    // opening a new issue. Only valid when NOT a task -- "@agy" always
     // starts a fresh, dedicated issue regardless of any session in progress.
     if (!isTask && existingIssueNumber) {
       const ghResp = await commentOnIssue({ pat, issueNumber: existingIssueNumber, body: agyBody });
